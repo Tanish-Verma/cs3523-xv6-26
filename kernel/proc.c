@@ -10,13 +10,13 @@ struct cpu cpus[NCPU];
 
 struct proc proc[NPROC];
 
-struct proc *initproc;
+struct proc *initproc; // Pointer to the init process
 
-int nextpid = 1;
-struct spinlock pid_lock;
+int nextpid = 1; //Global PID counter
+struct spinlock pid_lock; //Ensures unique PID assignment
 
-extern void forkret(void);
-static void freeproc(struct proc *p);
+extern void forkret(void); // First process that a forked process runs.
+static void freeproc(struct proc *p); // Function to free a process
 
 extern char trampoline[]; // trampoline.S
 
@@ -24,7 +24,12 @@ extern char trampoline[]; // trampoline.S
 // parents are not lost. helps obey the
 // memory model when using p->parent.
 // must be acquired before any p->lock.
-struct spinlock wait_lock;
+struct spinlock wait_lock; 
+//Basically prevents the child process from exiting 
+// Before parent has even slept.
+//Otherwise, parent didnt sleep, checks if child over, child not over , parent tries to sleep
+// child over sends report but parent not asleep hence report is lost and parent is sleeping beauty
+  
 
 // Allocate a page for each process's kernel stack.
 // Map it high in memory, followed by an invalid
@@ -35,12 +40,13 @@ proc_mapstacks(pagetable_t kpgtbl)
   struct proc *p;
   
   for(p = proc; p < &proc[NPROC]; p++) {
-    char *pa = kalloc();
+    char *pa = kalloc(); //allocates kernel memory
     if(pa == 0)
-      panic("kalloc");
-    uint64 va = KSTACK((int) (p - proc));
-    kvmmap(kpgtbl, va, (uint64)pa, PGSIZE, PTE_R | PTE_W);
-  }
+      panic("kalloc"); //If memory is over panic
+    uint64 va = KSTACK((int) (p - proc)); //Generate a virtual address for the kernel memory
+    kvmmap(kpgtbl, va, (uint64)pa, PGSIZE, PTE_R | PTE_W); //maps kernel vm to physical memory
+
+  } 
 }
 
 // initialize the proc table.
@@ -49,12 +55,12 @@ procinit(void)
 {
   struct proc *p;
   
-  initlock(&pid_lock, "nextpid");
+  initlock(&pid_lock, "nextpid"); // Initializing changes the locked bit to 0/unlocked status
   initlock(&wait_lock, "wait_lock");
   for(p = proc; p < &proc[NPROC]; p++) {
       initlock(&p->lock, "proc");
       p->state = UNUSED;
-      p->kstack = KSTACK((int) (p - proc));
+      p->kstack = KSTACK((int) (p - proc)); // Sets the address for kernels vm
   }
 }
 
@@ -89,6 +95,7 @@ myproc(void)
   return p;
 }
 
+//gives a process id to an unused process
 int
 allocpid()
 {
@@ -112,7 +119,7 @@ allocproc(void)
   struct proc *p;
 
   for(p = proc; p < &proc[NPROC]; p++) {
-    acquire(&p->lock);
+    acquire(&p->lock); // acquires p->lock, so that no other cpu can take this process 
     if(p->state == UNUSED) {
       goto found;
     } else {
@@ -126,7 +133,9 @@ found:
   p->state = USED;
 
   // Allocate a trapframe page.
-  if((p->trapframe = (struct trapframe *)kalloc()) == 0){
+  if((p->trapframe = (struct trapframe *)kalloc()) == 0){ 
+    //kernel memory for trapframe
+    //if memory allocation fails returns 0
     freeproc(p);
     release(&p->lock);
     return 0;
@@ -476,12 +485,12 @@ sched(void)
   struct proc *p = myproc();
 
   if(!holding(&p->lock))
-    panic("sched p->lock");
-  if(mycpu()->noff != 1)
+    panic("sched p->lock"); // If the process is not holding a lock, panic
+  if(mycpu()->noff != 1) // Only one level of lock must be there
     panic("sched locks");
-  if(p->state == RUNNING)
+  if(p->state == RUNNING) //Its state should not be running
     panic("sched RUNNING");
-  if(intr_get())
+  if(intr_get()) //interrupts should be disabled
     panic("sched interruptible");
 
   intena = mycpu()->intena;
