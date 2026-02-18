@@ -10,17 +10,17 @@ main()
 
     int pid1 = fork();
     if(pid1 == 0){
-        sleep(10);
+        pause(10);
         exit(0);
     }
 
     int pid2 = fork();
     if(pid2 == 0){
-        sleep(20);
+        pause(20);
         exit(0);
     }
 
-    sleep(5);
+    pause(5);
 
     int n = getnumchild();
     printf("Number of children (expected 2): %d\n", n);

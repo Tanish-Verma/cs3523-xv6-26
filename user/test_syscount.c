@@ -12,7 +12,7 @@ main()
     // Make known number of syscalls
     getpid();
     getpid();
-    sleep(1);
+    pause(1);
     getpid();
 
     int after = getsyscount();
