@@ -152,6 +152,10 @@ UPROGS=\
 	$U/_B2\
 	$U/_C2\
 	$U/_C3\
+	$U/_test_basic\
+	$U/_test_children\
+	$U/_test_fork_syscount\
+	$U/_test_syscount\
 
 fs.img: mkfs/mkfs README $(UPROGS)
 	mkfs/mkfs fs.img README $(UPROGS)
