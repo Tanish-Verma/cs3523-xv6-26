@@ -26,3 +26,5 @@
 #define SYS_getnumchild 25
 #define SYS_getsyscount 26
 #define SYS_getchildsyscount 27
+#define SYS_getlevel 28
+#define SYS_getmlfqinfo 29

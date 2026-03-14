@@ -146,16 +146,12 @@ UPROGS=\
 	$U/_forphan\
 	$U/_dorphan\
 	$U/_hello\
-	$U/_A1\
-	$U/_A2\
-	$U/_B1\
-	$U/_B2\
-	$U/_C2\
-	$U/_C3\
-	$U/_1\
-	$U/_2\
-	$U/_3\
-	$U/_4\
+	$U/_A\
+	$U/_B\
+	$U/_C\
+	$U/_D\
+	$U/_E\
+	$U/_F\
 
 fs.img: mkfs/mkfs README $(UPROGS)
 	mkfs/mkfs fs.img README $(UPROGS)

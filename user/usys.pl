@@ -48,3 +48,5 @@ entry("getppid");
 entry("getnumchild");
 entry("getsyscount");
 entry("getchildsyscount");
+entry("getlevel");
+entry("getmlfqinfo");

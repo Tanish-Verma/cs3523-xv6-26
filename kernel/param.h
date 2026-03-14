@@ -12,4 +12,4 @@
 #define FSSIZE       2000  // size of file system in blocks
 #define MAXPATH      256   // maximum file path name
 #define USERSTACK    1     // user stack pages
-
+#define NQUEUE        4     // number of queues in MLFQ
