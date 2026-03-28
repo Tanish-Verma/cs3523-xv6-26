@@ -344,6 +344,14 @@ sfence_vma()
   asm volatile("sfence.vma zero, zero");
 }
 
+static inline void
+sfence_vma_addr(uint64 va)
+{
+  // %0 is replaced by the 'va' variable. 
+  // 'r' tells the compiler to put 'va' into a general purpose register (rs1).
+  asm volatile("sfence.vma %0, zero" : : "r" (va));
+}
+
 typedef uint64 pte_t;
 typedef uint64 *pagetable_t; // 512 PTEs
 
@@ -360,6 +368,8 @@ typedef uint64 *pagetable_t; // 512 PTEs
 #define PTE_W (1L << 2)
 #define PTE_X (1L << 3)
 #define PTE_U (1L << 4) // user can access
+#define PTE_A (1L << 6) // accessed
+#define PTE_S (1L << 8) // swapped
 
 // shift a physical address to the right place for a PTE.
 #define PA2PTE(pa) ((((uint64)pa) >> 12) << 10)

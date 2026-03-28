@@ -148,10 +148,6 @@ UPROGS=\
 	$U/_hello\
 	$U/_A\
 	$U/_B\
-	$U/_C\
-	$U/_D\
-	$U/_E\
-	$U/_F\
 
 fs.img: mkfs/mkfs README $(UPROGS)
 	mkfs/mkfs fs.img README $(UPROGS)

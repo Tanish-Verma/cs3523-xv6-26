@@ -79,6 +79,13 @@ void procinit(void)
     p->del_t = 0;
     p->kstack = KSTACK((int)(p - proc)); // Sets the address for kernels vm
     p->to_demote = 1;
+
+    // Initializing the page fault and eviction counters
+    p->page_faults = 0;
+    p->pages_evicted = 0;
+    p->pages_swapped_in = 0;
+    p->pages_swapped_out = 0;
+    p->resident_pages = 0;
   }
 }
 
@@ -211,6 +218,11 @@ freeproc(struct proc *p)
   p->queue_level = 0;
   p->del_s = 0;
   p->del_t = 0;
+  p->page_faults = 0;
+  p->pages_evicted = 0;
+  p->pages_swapped_in = 0;
+  p->pages_swapped_out = 0;
+  p->resident_pages = 0;
 }
 
 // Create a user page table for a given process, with no user memory,
@@ -314,7 +326,7 @@ int kfork(void)
   }
 
   // Copy user memory from parent to child.
-  if (uvmcopy(p->pagetable, np->pagetable, p->sz) < 0)
+  if (uvmcopy(p->pagetable, np->pagetable, p->sz, np) < 0)
   {
     freeproc(np);
     release(&np->lock);

@@ -7,6 +7,7 @@
 #include "proc.h"
 #include "vm.h"
 #include "mlfqinfo.h"
+#include "vmstats.h"
 
 uint64
 sys_exit(void)
@@ -255,7 +256,44 @@ sys_getmlfqinfo(void)
       release(&p->lock);
       if (copyout(myproc()->pagetable, uaddr, (char *)&info, sizeof(info)) < 0)
       {
-        return -1;
+        return -2;
+      }
+      return 0;
+    }
+    release(&p->lock);
+  }
+  printf("Process with PID %d not found\n", pid);
+  return -1;
+}
+
+uint64
+sys_getvmstats(void)
+{
+  int pid;
+  uint64 uaddr;
+  argint(0, &pid);
+  argaddr(1, &uaddr);
+  if (pid <= 0)
+  {
+    printf("Invalid PID: %d\n", pid);
+    return -1;
+  }
+  struct vmstats stats = {0};
+  struct proc *p;
+  for (p = proc; p < &proc[NPROC]; p++)
+  {
+    acquire(&p->lock);
+    if (p->pid == pid && p->state != UNUSED)
+    {
+      stats.page_faults = p->page_faults;
+      stats.pages_evicted = p->pages_evicted;
+      stats.pages_swapped_in = p->pages_swapped_in;
+      stats.pages_swapped_out = p->pages_swapped_out;
+      stats.resident_pages = p->resident_pages;
+      release(&p->lock);
+      if (copyout(myproc()->pagetable, uaddr, (char *)&stats, sizeof(stats)) < 0)
+      {
+        return -2;
       }
       return 0;
     }

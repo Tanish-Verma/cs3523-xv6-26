@@ -117,6 +117,12 @@ struct proc
   int del_s;                // Temporary storage for computing del s
   int del_t;                // Temporary storage for computing del t
   int to_demote;            // Flag to indicate if process should be demoted on next tick
+  int page_faults;          // Number of page faults
+  int pages_evicted;        // Number of pages evicted
+  int pages_swapped_in;     // Number of pages swapped in
+  int pages_swapped_out;    // Number of pages swapped out (same as evicted but for swapped processes)
+  int resident_pages;       // Number of resident pages
+  
   // wait_lock must be held when using this:
   struct proc *parent; // Parent process
 

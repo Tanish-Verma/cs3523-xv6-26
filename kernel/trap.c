@@ -70,8 +70,8 @@ usertrap(void)
   {
     // ok
   }
-  else if ((r_scause() == 15 || r_scause() == 13) &&
-           vmfault(p->pagetable, r_stval(), (r_scause() == 13) ? 1 : 0) != 0)
+  else if ((r_scause() == 15 || r_scause() == 13 || r_scause() == 12) &&
+           vmfault(p->pagetable, r_stval(), (r_scause() == 13 || r_scause() == 12) ? 1 : 0) != 0)
   {
     // page fault on lazily-allocated page
   }
@@ -190,7 +190,7 @@ void kerneltrap()
       if (p->queue_level < NQUEUE - 1 && (p->to_demote && p->del_s < p->del_t))
       {
         p->queue_level++;
-        printf("Process %d (%s) demoted to level %d\n", p->pid, p->name, p->queue_level);
+        // printf("Process %d (%s) demoted to level %d\n", p->pid, p->name, p->queue_level);
       }
       p->ticks_cnsum = 0;
       release(&p->lock);
@@ -215,14 +215,14 @@ extern struct proc proc[NPROC];
 
 void globalboost()
 {
-  printf("Global boost occured\n");
+  // printf("Global boost occured\n");
   struct proc *p;
   for (p = proc; p < &proc[NPROC]; p++)
   {
     acquire(&p->lock);
-    if (p->state == RUNNABLE)
+    if (p->state == RUNNABLE || p->state == RUNNING || p->state == SLEEPING)
     {
-      printf("Boosting process %d (%s) from level %d to level 0\n", p->pid, p->name, p->queue_level);
+      // printf("Boosting process %d (%s) from level %d to level 0\n", p->pid, p->name, p->queue_level);
       p->queue_level = 0;
       p->ticks_cnsum = 0;
     }

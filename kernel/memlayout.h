@@ -36,8 +36,17 @@
 // the kernel expects there to be RAM
 // for use by the kernel and user pages
 // from physical address 0x80000000 to PHYSTOP.
+// Max physical memory is 128MB 
 #define KERNBASE 0x80000000L
+#define SWAP_SIZE      (120 * 1024 * 1024)
 #define PHYSTOP (KERNBASE + 128*1024*1024)
+#define USABLE_PHYSTOP (PHYSTOP - SWAP_SIZE)
+#define NSWAPFRAMES    (SWAP_SIZE / PGSIZE)
+
+//We can't use end because it's defined in kernel.ld, which is linked after memlayout.h is included. 
+//So we define it here using kernbase.It takes more memory but its fine for our purposes.
+#define MAX_NFRAME     ((USABLE_PHYSTOP - KERNBASE) / PGSIZE)
+#define NSWAPFRAMES    (SWAP_SIZE / PGSIZE)
 
 // map the trampoline page to the highest address,
 // in both user and kernel space.
