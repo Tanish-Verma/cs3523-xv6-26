@@ -17,6 +17,8 @@ extern char etext[]; // kernel.ld sets this to end of kernel code.
 
 extern char trampoline[]; // trampoline.S
 
+extern int active_frames;
+
 // Make a direct-map page table for the kernel.
 pagetable_t
 kvmmake(void)
@@ -202,10 +204,13 @@ void uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
   {
     if ((pte = walk(pagetable, a, 0)) == 0) // leaf page table entry allocated?
       continue;
-    if ((*pte & PTE_V) == 0){
-      if ((*pte & PTE_S)) {
-        if (do_free) {
-          swap_free(a, pagetable); 
+    if ((*pte & PTE_V) == 0)
+    {
+      if ((*pte & PTE_S))
+      {
+        if (do_free)
+        {
+          swap_free(a, pagetable);
         }
         *pte = 0;
         continue;
@@ -214,7 +219,7 @@ void uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
     if (do_free)
     {
       uint64 pa = PTE2PA(*pte);
-      freeframeTable((void *) pa);
+      freeframeTable((void *)pa);
       kfree((void *)pa);
     }
     *pte = 0;
@@ -235,7 +240,7 @@ uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz, int xperm)
   oldsz = PGROUNDUP(oldsz);
   for (a = oldsz; a < newsz; a += PGSIZE)
   {
-    mem = kalloc();
+    mem = (char *)get_user_frame();
     if (mem == 0)
     {
       uvmdealloc(pagetable, a, oldsz);
@@ -248,7 +253,7 @@ uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz, int xperm)
       uvmdealloc(pagetable, a, oldsz);
       return 0;
     }
-    fillframeTable((void*)mem, myproc(), a);
+    fillframeTable((void *)mem, myproc(), a);
   }
   return newsz;
 }
@@ -310,7 +315,7 @@ void uvmfree(pagetable_t pagetable, uint64 sz)
 // physical memory.
 // returns 0 on success, -1 on failure.
 // frees any allocated pages on failure.
-int uvmcopy(pagetable_t old, pagetable_t new, uint64 sz,struct proc* np)
+int uvmcopy(pagetable_t old, pagetable_t new, uint64 sz, struct proc *np)
 {
   pte_t *pte;
   uint64 pa, i;
@@ -321,19 +326,25 @@ int uvmcopy(pagetable_t old, pagetable_t new, uint64 sz,struct proc* np)
   {
     if ((pte = walk(old, i, 0)) == 0)
       continue; // page table entry hasn't been allocated
-    if ((*pte & PTE_V) == 0) {
-      if (*pte & PTE_S) {
+    if ((*pte & PTE_V) == 0)
+    {
+      if (*pte & PTE_S)
+      {
         // This page is swapped out, we bring it into memory and copy it
-        if (vmfault(old, i, 0) == 0) {
-          goto err; 
+        if (vmfault(old, i, 0) == 0)
+        {
+          goto err;
         }
-      } else {
-        continue; 
+      }
+      else
+      {
+        continue;
       }
     }
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
-    if ((mem = kalloc()) == 0)
+    mem = (char *)get_user_frame();
+    if (mem == 0)
       goto err;
     memmove(mem, (char *)pa, PGSIZE);
     if (mappages(new, i, PGSIZE, (uint64)mem, flags) != 0)
@@ -341,7 +352,7 @@ int uvmcopy(pagetable_t old, pagetable_t new, uint64 sz,struct proc* np)
       kfree(mem);
       goto err;
     }
-    fillframeTable((void*)mem, np, i);
+    fillframeTable((void *)mem, np, i);
   }
   return 0;
 
@@ -503,10 +514,12 @@ vmfault(pagetable_t pagetable, uint64 va, int read)
   p->page_faults++;
   release(&p->lock);
   pte_t *pte = walk(pagetable, va, 0);
-  if (pte != 0 && (*pte & PTE_S)) {
+  if (pte != 0 && (*pte & PTE_S))
+  {
     printf("fault pid=%d va=%ld swapped\n", p->pid, va);
-    void *new_pa = kalloc();
-    if (new_pa == 0) {
+    void *new_pa = get_user_frame();
+    if (new_pa == 0)
+    {
       printf("oom vmfault\n");
       return 0; // Kills the process
     }
@@ -514,13 +527,14 @@ vmfault(pagetable_t pagetable, uint64 va, int read)
     swap_in(va, pagetable, new_pa);
     printf("vmfault swapin pid=%d va=%ld pa=%p\n", p->pid, va, new_pa);
     acquire(&p->lock);
-      p->pages_swapped_in++; // Increment the process's swapped in counter
+    p->pages_swapped_in++; // Increment the process's swapped in counter
     release(&p->lock);
     fillframeTable(new_pa, p, va);
-    return (uint64)new_pa; 
+    return (uint64)new_pa;
   }
-  mem = (uint64)kalloc();
-  if (mem == 0){
+  mem = (uint64)get_user_frame();
+  if (mem == 0)
+  {
     printf("oom vmfault\n");
     return 0;
   }
@@ -530,7 +544,7 @@ vmfault(pagetable_t pagetable, uint64 va, int read)
     kfree((void *)mem);
     return 0;
   }
-  fillframeTable((void*)mem, p, va);
+  fillframeTable((void *)mem, p, va);
   return mem;
 }
 
@@ -546,4 +560,22 @@ int ismapped(pagetable_t pagetable, uint64 va)
     return 1;
   }
   return 0;
+}
+
+extern struct spinlock frame_lock;
+void* get_user_frame() 
+{
+  void *pa;
+  acquire(&frame_lock);
+  
+  if (active_frames < MAX_NFRAME) {
+    active_frames++;
+    release(&frame_lock);
+    pa = kalloc();
+  } else {
+    release(&frame_lock);
+    pa = evict_page(); 
+  }
+  
+  return pa;
 }

@@ -16,6 +16,7 @@ extern char end[]; // first address after kernel.
 // defined by kernel.ld.
 
 int clock_hand = 0;
+int active_frames = 0;
 
 struct run
 {
@@ -211,7 +212,11 @@ void freeframeTable(void *pa)
       frameTable[i].proc = 0;
       frameTable[i].va = 0;
       frameTable[i].pa = 0;
-      p->resident_pages--;
+      if (p)
+      {
+        p->resident_pages--;
+      }
+      active_frames--;
       break;
     }
   }
@@ -368,12 +373,15 @@ void *evict_page()
   void *victim_pa = frameTable[best_victim_index].pa;
   struct proc *victim_p = frameTable[best_victim_index].proc;
   uint64 victim_va = frameTable[best_victim_index].va;
+
   printf("evict pid=%d q=%d va=%ld pa=%p\n", victim_p->pid, victim_p->queue_level, victim_va, victim_pa);
+
   if (swap_out(victim_va, victim_p->pagetable, victim_pa) == -1)
   {
     release(&frame_lock);
-    return 0; // Return NULL to signal catastrophic out-of-memory
+    return 0; // Return 0 to signal out-of-memory
   }
+
   printf("swapped out pid=%d va=%ld to swap\n", victim_p->pid, victim_va);
 
   acquire(&victim_p->lock);
@@ -382,7 +390,7 @@ void *evict_page()
   release(&victim_p->lock);
 
   memset(victim_pa, 0, PGSIZE);
-
+  active_frames++; // To balance the decrement we will do in freeframeTable after the page is actually freed
   release(&frame_lock);
   
   freeframeTable(victim_pa);
