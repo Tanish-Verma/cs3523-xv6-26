@@ -33,14 +33,13 @@ struct swap_entry swapTable[NSWAPFRAMES];
 struct spinlock frame_lock;
 struct spinlock swap_lock;
 
-void
-map_swapspace_pa_direct(void)
+void map_swapspace_pa_direct(void)
 {
   uint64 pa = USABLE_PHYSTOP;
   for (int i = 0; i < NSWAPFRAMES; i++, pa += PGSIZE)
   {
     swapTable[i].pa = (void *)pa;
-    memset((void *)pa, 0, PGSIZE); // zero out the swap space
+    memset((void *)pa, 0, PGSIZE); // fill with 0
   }
 }
 
@@ -51,7 +50,7 @@ void initswapspace()
   for (int i = 0; i < NSWAPFRAMES; i++)
   {
     swapTable[i].in_use = 0;
-    swapTable[i].proc = 0;
+    swapTable[i].pagetable = 0;
     swapTable[i].va = 0;
   }
   //// debug print
@@ -62,51 +61,7 @@ void initswapspace()
   //        (void *)USABLE_PHYSTOP,
   //        (void *)PHYSTOP);
 }
-void swap_in(uint64 va, struct proc *p, void *new_pa)
-{
-  acquire(&swap_lock); // Lock ONCE before searching
-
-  int found = 0;
-
-  for (int i = 0; i < NSWAPFRAMES; i++)
-  {
-    // Find the exact slot holding our evicted page
-    if (swapTable[i].in_use == 1 && swapTable[i].proc == p && swapTable[i].va == va)
-    {
-      // 1. Copy the 4096 bytes from the swap region into the new physical RAM page
-      memmove(new_pa, swapTable[i].pa, PGSIZE);
-
-      // 2. Erase the metadata and mark the swap slot as free
-      swapTable[i].in_use = 0;
-      swapTable[i].proc = 0;
-      swapTable[i].va = 0;
-      // Update the PTE to point to the new PA, and mark it valid (clear the swapped bit)
-      pte_t *pte = walk(p->pagetable, va, 0);
-      if (pte == 0)
-        panic("swap_in: pte missing");
-
-      int flags = PTE_FLAGS(*pte);
-
-      *pte = PA2PTE(new_pa) | (flags & ~PTE_S) | PTE_V;
-      acquire(&p->lock);
-      p->pages_swapped_in++; // Increment the process's swapped in counter
-      release(&p->lock);
-      found = 1;
-      printf("swapin pid=%d va=%ld slot=%d pa=%p\n", p->pid, va, i, new_pa);
-      break; // We found it, no need to keep looping!
-    }
-  }
-
-  release(&swap_lock); // Release the lock
-
-  // Defensive programming: If the PTE said it was swapped, but we couldn't find it, the OS is corrupted.
-  if (!found)
-  {
-    panic("swap_in: Page not found in swap space!");
-  }
-}
-
-int swap_out(uint64 va, struct proc *p, void *pa_to_evict)
+void swap_in(uint64 va, pagetable_t pagetable, void *new_pa)
 {
   acquire(&swap_lock);
 
@@ -114,28 +69,61 @@ int swap_out(uint64 va, struct proc *p, void *pa_to_evict)
 
   for (int i = 0; i < NSWAPFRAMES; i++)
   {
-    // Look for an EMPTY slot in the swap space
+    if (swapTable[i].in_use == 1 && swapTable[i].pagetable == pagetable && swapTable[i].va == va)
+    {
+
+      memmove(new_pa, swapTable[i].pa, PGSIZE);
+
+      swapTable[i].in_use = 0;
+      swapTable[i].pagetable = 0;
+      swapTable[i].va = 0;
+      memset(swapTable[i].pa, 0, PGSIZE);
+      pte_t *pte = walk(pagetable, va, 0);
+      if (pte == 0)
+        panic("swap_in: pte missing");
+
+      int flags = PTE_FLAGS(*pte);
+
+      *pte = PA2PTE(new_pa) | (flags & ~PTE_S) | PTE_V;
+      found = 1;
+      break;
+    }
+  }
+
+  release(&swap_lock);
+
+  if (!found)
+  {
+    printf("swap_in failed: page not found in swap space! va=%ld\n", va);
+    panic("swap_in: Page not found in swap space!");
+  }
+}
+
+int swap_out(uint64 va, pagetable_t pagetable, void *pa_to_evict)
+{
+  acquire(&swap_lock);
+
+  int found = 0;
+
+  for (int i = 0; i < NSWAPFRAMES; i++)
+  {
+
     if (swapTable[i].in_use == 0)
     {
       swapTable[i].in_use = 1;
-      swapTable[i].proc = p;
+      swapTable[i].pagetable = pagetable;
       swapTable[i].va = va;
 
       // Copy the 4096 bytes from RAM into the reserved swap region
       memmove(swapTable[i].pa, pa_to_evict, PGSIZE);
 
-      pte_t *pte = walk(p->pagetable, va, 0);
+      pte_t *pte = walk(pagetable, va, 0);
       if (pte == 0)
         panic("swap_out: pte missing");
 
-      // Clear Valid bit, Set Swap bit. Leave all other permission flags alone!
+      // Clear Valid bit, Set Swap bit. Leave all other permission flags alone
       *pte = (*pte & ~PTE_V) | PTE_S;
-      acquire(&p->lock);
-      p->pages_swapped_out++; // Increment the process's swapped out counter
-      p->pages_evicted++;
-      release(&p->lock);
       found = 1;
-      printf("swapout pid=%d va=%ld slot=%d\n", p->pid, va, i);
       break;
     }
   }
@@ -149,23 +137,21 @@ int swap_out(uint64 va, struct proc *p, void *pa_to_evict)
   return 0;
 }
 
-void swap_free(uint64 va, struct proc *p)
+void swap_free(uint64 va, pagetable_t pagetable)
 {
   acquire(&swap_lock);
 
   for (int i = 0; i < NSWAPFRAMES; i++)
   {
-    // Find the exact swap slot for this process and virtual address
-    if (swapTable[i].in_use == 1 && swapTable[i].proc == p && swapTable[i].va == va)
+    // Find the exact swap slot for this pagetable and virtual address
+    if (swapTable[i].in_use == 1 && swapTable[i].pagetable == pagetable && swapTable[i].va == va)
     {
 
       // Clear the metadata
       swapTable[i].in_use = 0;
-      swapTable[i].proc = 0;
+      swapTable[i].pagetable = 0;
       swapTable[i].va = 0;
       memset(swapTable[i].pa, 0, PGSIZE);
-      // Note: We do NOT free swapTable[i].pa because that physical
-      // memory is permanently reserved for the swap arena!
       break;
     }
   }
@@ -196,8 +182,7 @@ void fillframeTable(void *pa, struct proc *p, uint64 va)
       frameTable[i].proc = p;
       frameTable[i].va = va;
       frameTable[i].pa = pa;
-      // increment resident page count for the process that owns this frame
-      //  debug print
+      //  //debug print
       //  if (p && p->pid > 2) {
       //    // printf("[FrameTracker] Added: PID %d, VA %ld, PA %p\n", p->pid, va, pa);
       //  }
@@ -222,13 +207,10 @@ void freeframeTable(void *pa)
     {
       frameTable[i].in_use = 0;
       struct proc *p = frameTable[i].proc;
-      // We don't have the process pointer here easily, so just print the PA
-      // debug print
       // printf("[FrameTracker] Freed PID:  %d\n", p ? p->pid : -1);
       frameTable[i].proc = 0;
       frameTable[i].va = 0;
       frameTable[i].pa = 0;
-      // decrement resident page count for the process that owned this frame
       p->resident_pages--;
       break;
     }
@@ -374,7 +356,6 @@ void *evict_page()
     panic("evict_page: 100% memory deadlock, no victim found");
   }
 
-  // ADVANCE THE CLOCK HAND FOR THE NEXT EVICTION
   if (stop_index != -1)
   {
     clock_hand = stop_index; // Start at the '1' we stopped at
@@ -387,20 +368,23 @@ void *evict_page()
   void *victim_pa = frameTable[best_victim_index].pa;
   struct proc *victim_p = frameTable[best_victim_index].proc;
   uint64 victim_va = frameTable[best_victim_index].va;
-    printf("evict pid=%d q=%d va=%ld pa=%p\n",
-      victim_p->pid, victim_p->queue_level, victim_va, victim_pa);
-  // 1. Move data to your 16MB swap space and update the PTE (V=0, S=1)
-  if (swap_out(victim_va, victim_p, victim_pa) == -1) {
-    // SWAP IS 100% FULL! 
-    // We cannot safely evict this page. Abort the eviction entirely.
+  printf("evict pid=%d q=%d va=%ld pa=%p\n", victim_p->pid, victim_p->queue_level, victim_va, victim_pa);
+  if (swap_out(victim_va, victim_p->pagetable, victim_pa) == -1)
+  {
     release(&frame_lock);
     return 0; // Return NULL to signal catastrophic out-of-memory
   }
-  // 2. Clear the frame table slot so it can be reused
-  // Good practice to clear the RAM before handing it back to kalloc
+  printf("swapped out pid=%d va=%ld to swap\n", victim_p->pid, victim_va);
+
+  acquire(&victim_p->lock);
+  victim_p->pages_swapped_out++;
+  victim_p->pages_evicted++;
+  release(&victim_p->lock);
+
   memset(victim_pa, 0, PGSIZE);
-  
+
   release(&frame_lock);
+  
   freeframeTable(victim_pa);
 
   return victim_pa;

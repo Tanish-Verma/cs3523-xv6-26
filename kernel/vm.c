@@ -205,7 +205,7 @@ void uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
     if ((*pte & PTE_V) == 0){
       if ((*pte & PTE_S)) {
         if (do_free) {
-          swap_free(a, myproc()); 
+          swap_free(a, pagetable); 
         }
         *pte = 0;
         continue;
@@ -323,13 +323,10 @@ int uvmcopy(pagetable_t old, pagetable_t new, uint64 sz,struct proc* np)
       continue; // page table entry hasn't been allocated
     if ((*pte & PTE_V) == 0) {
       if (*pte & PTE_S) {
-        // The parent's page is in swap! Bring it back to RAM.
-        // vmfault returns 0 if out of memory (kalloc failed).
+        // This page is swapped out, we bring it into memory and copy it
         if (vmfault(old, i, 0) == 0) {
           goto err; 
         }
-        // vmfault succeeded! The parent's page is now in RAM, 
-        // and PTE_V is now 1. We can fall through to the normal copy below!
       } else {
         continue; 
       }
@@ -503,7 +500,6 @@ vmfault(pagetable_t pagetable, uint64 va, int read)
     return 0;
   }
   acquire(&p->lock);
-  // printf("vmfault pid=%d va=%ld\n", p->pid, va);
   p->page_faults++;
   release(&p->lock);
   pte_t *pte = walk(pagetable, va, 0);
@@ -515,7 +511,11 @@ vmfault(pagetable_t pagetable, uint64 va, int read)
       return 0; // Kills the process
     }
 
-    swap_in(va, p, new_pa);
+    swap_in(va, pagetable, new_pa);
+    printf("vmfault swapin pid=%d va=%ld pa=%p\n", p->pid, va, new_pa);
+    acquire(&p->lock);
+      p->pages_swapped_in++; // Increment the process's swapped in counter
+    release(&p->lock);
     fillframeTable(new_pa, p, va);
     return (uint64)new_pa; 
   }

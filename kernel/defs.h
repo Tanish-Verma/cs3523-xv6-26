@@ -19,7 +19,7 @@ struct swap_entry
 {
     void *pa;
     int in_use;
-    struct proc *proc;
+    pagetable_t pagetable;
     uint64 va;
 };
 
@@ -75,12 +75,12 @@ void kfree(void *);
 void kinit(void);
 void initswapspace(void);
 void map_swapspace_pa_direct(void);
-void swap_in(uint64, struct proc *, void *);
-int swap_out(uint64, struct proc *, void *);
+void swap_in(uint64, pagetable_t, void *);
+int swap_out(uint64, pagetable_t, void *);
 void initframeTable(void);
 void fillframeTable(void *, struct proc *, uint64);
 void freeframeTable(void *);
-void swap_free(uint64, struct proc *);
+void swap_free(uint64, pagetable_t);
 void *evict_page(void);
 
 // log.c
