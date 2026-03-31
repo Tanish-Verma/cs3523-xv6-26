@@ -1,87 +1,74 @@
+// test_basic_pf.c
+// Tests basic page fault handling and getvmstats system call.
+// Allocates memory, touches pages, then reads back vmstats.
+
 #include "kernel/types.h"
 #include "kernel/stat.h"
 #include "user/user.h"
-#include "kernel/vmstats.h"
+#include "kernel/vmstats.h"   // struct vmstats
 
-static int
-all_non_negative(const struct vmstats *s)
-{
-  return s->page_faults >= 0 &&
-         s->pages_evicted >= 0 &&
-         s->pages_swapped_in >= 0 &&
-         s->pages_swapped_out >= 0 &&
-         s->resident_pages >= 0;
-}
+#define PAGE_SIZE 4096
+#define NUM_PAGES 64
 
 int
 main(void)
 {
-  struct vmstats before = {0};
-  struct vmstats after = {0};
-  int pid = getpid();
-  int rc;
+    struct vmstats st;
+    int pid = getpid();
 
-  rc = getvmstats(pid, &before);
-  if (rc != 0)
-  {
-    printf("FAIL: getvmstats(self) returned %d\n", rc);
-    exit(1);
-  }
+    printf("=== test_basic_pf: Basic Page Fault Test ===\n");
+    printf("PID: %d\n", pid);
 
-  if (!all_non_negative(&before))
-  {
-    printf("FAIL: negative counter in initial stats\n");
-    exit(1);
-  }
+    // Allocate NUM_PAGES pages via sbrk
+    char *mem = sbrk(NUM_PAGES * PAGE_SIZE);
+    if (mem == (char *)-1) {
+        printf("FAIL: sbrk failed\n");
+        exit(1);
+    }
 
-  // Touch two fresh pages to trigger lazy allocation/page-fault activity.
-  char *base = sbrk(2 * 4096);
-  if (base == (char *)-1)
-  {
-    printf("FAIL: sbrk failed\n");
-    exit(1);
-  }
-  base[0] = 'x';
-  base[4096] = 'y';
+    // Touch each page to trigger a page fault per page
+    for (int i = 0; i < NUM_PAGES; i++) {
+        mem[i * PAGE_SIZE] = (char)(i + 1);
+    }
 
-  rc = getvmstats(pid, &after);
-  if (rc != 0)
-  {
-    printf("FAIL: getvmstats(after touch) returned %d\n", rc);
-    exit(1);
-  }
+    // Read back to verify correctness
+    int ok = 1;
+    for (int i = 0; i < NUM_PAGES; i++) {
+        if (mem[i * PAGE_SIZE] != (char)(i + 1)) {
+            printf("FAIL: data mismatch at page %d\n", i);
+            ok = 0;
+        }
+    }
+    if (ok)
+        printf("PASS: all %d pages written and read back correctly\n", NUM_PAGES);
 
-  if (!all_non_negative(&after))
-  {
-    printf("FAIL: negative counter in final stats\n");
-    exit(1);
-  }
+    // Query vmstats
+    if (getvmstats(pid, &st) != 0) {
+        printf("FAIL: getvmstats returned error\n");
+        exit(1);
+    }
 
-  if (after.page_faults < before.page_faults)
-  {
-    printf("FAIL: page_faults decreased (%d -> %d)\n", before.page_faults, after.page_faults);
-    exit(1);
-  }
+    printf("\n--- VM Stats for PID %d ---\n", pid);
+    printf("  page_faults     : %d\n", st.page_faults);
+    printf("  pages_evicted   : %d\n", st.pages_evicted);
+    printf("  pages_swapped_in: %d\n", st.pages_swapped_in);
+    printf("  pages_swapped_out:%d\n", st.pages_swapped_out);
+    printf("  resident_pages  : %d\n", st.resident_pages);
 
-  if (getvmstats(-1, &after) >= 0)
-  {
-    printf("FAIL: invalid pid should fail\n");
-    exit(1);
-  }
+    // Some pages may already be resident, so faults need not equal NUM_PAGES.
+    if (st.page_faults > 0 && st.page_faults <= NUM_PAGES)
+        printf("PASS: page_faults (%d) in expected range [1, %d]\n",
+               st.page_faults, NUM_PAGES);
+    else
+        printf("FAIL: expected page_faults in range [1, %d], got %d\n",
+               NUM_PAGES, st.page_faults);
 
-  printf("PASS: getvmstats works\n");
-  printf("before: pf=%d ev=%d in=%d out=%d res=%d\n",
-         before.page_faults,
-         before.pages_evicted,
-         before.pages_swapped_in,
-         before.pages_swapped_out,
-         before.resident_pages);
-  printf("after : pf=%d ev=%d in=%d out=%d res=%d\n",
-         after.page_faults,
-         after.pages_evicted,
-         after.pages_swapped_in,
-         after.pages_swapped_out,
-         after.resident_pages);
+    // Test invalid PID
+    if (getvmstats(-1, &st) == -1)
+        printf("PASS: getvmstats(-1) correctly returned -1\n");
+    else
+        printf("FAIL: getvmstats(-1) should return -1\n");
 
-  exit(0);
+    printf("=== test_basic_pf done ===\n");
+    exit(0);
 }

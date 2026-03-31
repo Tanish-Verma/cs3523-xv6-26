@@ -516,7 +516,7 @@ vmfault(pagetable_t pagetable, uint64 va, int read)
   pte_t *pte = walk(pagetable, va, 0);
   if (pte != 0 && (*pte & PTE_S))
   {
-    printf("fault pid=%d va=%ld swapped\n", p->pid, va);
+    // printf("fault pid=%d va=%ld swapped\n", p->pid, va);
     void *new_pa = get_user_frame();
     if (new_pa == 0)
     {
@@ -525,7 +525,7 @@ vmfault(pagetable_t pagetable, uint64 va, int read)
     }
 
     swap_in(va, pagetable, new_pa);
-    printf("vmfault swapin pid=%d va=%ld pa=%p\n", p->pid, va, new_pa);
+    // printf("vmfault swapin pid=%d va=%ld pa=%p\n", p->pid, va, new_pa);
     acquire(&p->lock);
     p->pages_swapped_in++; // Increment the process's swapped in counter
     release(&p->lock);

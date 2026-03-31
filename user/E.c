@@ -1,88 +1,145 @@
-// test_replacement.c
-// Forces page replacement by allocating more pages than the physical frame limit.
-// Verifies Clock eviction occurs and swapped pages can be read back.
+// test_sched_aware.c
+// Tests scheduler-aware eviction: lower-priority (CPU-bound) children should
+// lose pages before higher-priority (interactive/high-queue) children.
 //
-// Assumes PHYS_FRAMES (the frame table size) is configured to something small,
-// e.g. 32 frames = 128 KB. Adjust FRAME_LIMIT below to match your kernel config.
+// Strategy:
+//   - Fork a LOW-priority child: runs a CPU spin loop first, dropping its
+//     MLFQ level, then allocates a working set.
+//   - Fork a HIGH-priority child: allocates its working set immediately
+//     (stays in top MLFQ queue).
+//   - Parent forces memory pressure by allocating its own large region.
+//   - Compare pages_evicted between the two children via getvmstats.
 
 #include "kernel/types.h"
 #include "kernel/stat.h"
 #include "user/user.h"
 #include "kernel/vmstats.h"
 
-#define PAGE_SIZE   4096
+#define PAGE_SIZE  4096
+#define WORK_PAGES 40      // working set per child
+#define SPIN_ITERS 800000000 // enough to burn through MLFQ quanta
 
-// Set this to the number of physical frames your kernel allows for user pages.
-// E.g. if you set MAX_FRAMES 32 in kalloc.c, set FRAME_LIMIT 32 here.
-#define FRAME_LIMIT 64
-
-// Allocate well beyond the frame limit to force eviction.
-#define NUM_PAGES   (FRAME_LIMIT * 3)
+// Shared memory between parent and children (via pipes)
+// Each child writes its PID to the pipe when ready.
 
 int
 main(void)
 {
-    struct vmstats before, after;
-    int pid = getpid();
+    int pipe_lo[2], pipe_hi[2];
+    pipe(pipe_lo);
+    pipe(pipe_hi);
 
-    printf("=== test_replacement: Clock Page Replacement Test ===\n");
-    printf("PID: %d | Frame limit: %d | Allocating: %d pages\n",
-           pid, FRAME_LIMIT, NUM_PAGES);
+    printf("=== test_sched_aware: Scheduler-Aware Eviction Test ===\n");
 
-    char *mem = sbrk((uint64)NUM_PAGES * PAGE_SIZE);
-    if (mem == (char *)-1) {
-        printf("FAIL: sbrk failed\n");
-        exit(1);
+    // --- Fork LOW-priority child ---
+    int pid_lo = fork();
+    if (pid_lo == 0) {
+        close(pipe_lo[0]);
+        close(pipe_hi[0]); close(pipe_hi[1]);
+
+        // Burn CPU to drop MLFQ priority
+        volatile int x = 0;
+        for (int i = 0; i < SPIN_ITERS; i++) x++;
+
+        // Allocate and touch working set
+        char *mem = sbrk((uint64)WORK_PAGES * PAGE_SIZE);
+        for (int i = 0; i < WORK_PAGES; i++)
+            mem[i * PAGE_SIZE] = (char)i;
+
+        // Signal parent we're ready
+        int mypid = getpid();
+        write(pipe_lo[1], &mypid, sizeof(mypid));
+        close(pipe_lo[1]);
+
+        // Keep working set alive while parent applies pressure
+        pause(20);
+
+        // Verify data integrity after potential evictions
+        int errs = 0;
+        for (int i = 0; i < WORK_PAGES; i++)
+            if (mem[i * PAGE_SIZE] != (char)i) errs++;
+        if (errs == 0)
+            printf("[LO-child] PASS: data intact after pressure\n");
+        else
+            printf("[LO-child] WARN: %d pages corrupted\n", errs);
+
+        exit(0);
     }
 
-    // Snapshot stats before touching pages
-    getvmstats(pid, &before);
+    // --- Fork HIGH-priority child ---
+    int pid_hi = fork();
+    if (pid_hi == 0) {
+        close(pipe_hi[0]);
+        close(pipe_lo[0]); close(pipe_lo[1]);
 
-    // --- Phase 1: Sequential write (fills frames, forces evictions) ---
-    printf("[Phase 1] Writing %d pages sequentially...\n", NUM_PAGES);
-    for (int i = 0; i < NUM_PAGES; i++) {
-        // Write a recognizable pattern
-        mem[i * PAGE_SIZE] = (char)(i & 0xFF);
+        // Immediately allocate working set (stays at top MLFQ queue)
+        char *mem = sbrk((uint64)WORK_PAGES * PAGE_SIZE);
+        for (int i = 0; i < WORK_PAGES; i++)
+            mem[i * PAGE_SIZE] = (char)(i + 100);
+
+        int mypid = getpid();
+        write(pipe_hi[1], &mypid, sizeof(mypid));
+        close(pipe_hi[1]);
+
+        pause(20);
+
+        int errs = 0;
+        for (int i = 0; i < WORK_PAGES; i++)
+            if (mem[i * PAGE_SIZE] != (char)(i + 100)) errs++;
+        if (errs == 0)
+            printf("[HI-child] PASS: data intact after pressure\n");
+        else
+            printf("[HI-child] WARN: %d pages corrupted\n", errs);
+
+        exit(0);
     }
 
-    getvmstats(pid, &after);
-    printf("  page_faults      : %d\n", after.page_faults - before.page_faults);
-    printf("  pages_evicted    : %d\n", after.pages_evicted - before.pages_evicted);
-    printf("  pages_swapped_out: %d\n", after.pages_swapped_out - before.pages_swapped_out);
-    printf("  resident_pages   : %d\n", after.resident_pages);
+    // --- Parent: wait for both children to be ready ---
+    close(pipe_lo[1]); close(pipe_hi[1]);
 
-    if (after.pages_evicted > 0)
-        printf("PASS: evictions occurred (%d)\n", after.pages_evicted);
+    int cpid_lo, cpid_hi;
+    read(pipe_lo[0], &cpid_lo, sizeof(cpid_lo));
+    read(pipe_hi[0], &cpid_hi, sizeof(cpid_hi));
+    close(pipe_lo[0]); close(pipe_hi[0]);
+
+    printf("LO-priority child PID: %d\n", cpid_lo);
+    printf("HI-priority child PID: %d\n", cpid_hi);
+
+    // Apply memory pressure: allocate a large region to push others out
+    int pressure_pages = 80;
+    char *pressure = sbrk((uint64)pressure_pages * PAGE_SIZE);
+    for (int i = 0; i < pressure_pages; i++)
+        pressure[i * PAGE_SIZE] = (char)i;
+
+    pause(5); // let eviction settle
+
+    // Read stats for both children
+    struct vmstats st_lo, st_hi;
+    if (getvmstats(cpid_lo, &st_lo) != 0) {
+        printf("FAIL: getvmstats for lo-child %d failed\n", cpid_lo);
+    } else {
+        printf("\n[LO-priority child %d]\n", cpid_lo);
+        printf("  pages_evicted   : %d\n", st_lo.pages_evicted);
+        printf("  pages_swapped_out:%d\n", st_lo.pages_swapped_out);
+        printf("  resident_pages  : %d\n", st_lo.resident_pages);
+    }
+
+    if (getvmstats(cpid_hi, &st_hi) != 0) {
+        printf("FAIL: getvmstats for hi-child %d failed\n", cpid_hi);
+    } else {
+        printf("[HI-priority child %d]\n", cpid_hi);
+        printf("  pages_evicted   : %d\n", st_hi.pages_evicted);
+        printf("  pages_swapped_out:%d\n", st_hi.pages_swapped_out);
+        printf("  resident_pages  : %d\n", st_hi.resident_pages);
+    }
+
+    if (st_lo.pages_evicted >= st_hi.pages_evicted)
+        printf("\nPASS: LO-priority process lost >= pages than HI-priority\n");
     else
-        printf("WARN: no evictions yet — increase NUM_PAGES or lower FRAME_LIMIT\n");
+        printf("\nFAIL: HI-priority process lost more pages than LO — check scheduler-aware eviction\n");
 
-    // --- Phase 2: Read back ALL pages (exercises swap-in) ---
-    printf("[Phase 2] Reading back all %d pages...\n", NUM_PAGES);
-    int errs = 0;
-    for (int i = 0; i < NUM_PAGES; i++) {
-        char expected = (char)(i & 0xFF);
-        if (mem[i * PAGE_SIZE] != expected) {
-            printf("FAIL: page %d: expected %d got %d\n",
-                   i, (int)(unsigned char)expected,
-                   (int)(unsigned char)mem[i * PAGE_SIZE]);
-            errs++;
-            if (errs > 5) { printf("  (too many errors, stopping)\n"); break; }
-        }
-    }
-    if (errs == 0)
-        printf("PASS: all %d pages read back correctly after eviction/swap-in\n",
-               NUM_PAGES);
-
-    getvmstats(pid, &after);
-    printf("[Phase 2 stats]\n");
-    printf("  pages_swapped_in : %d\n", after.pages_swapped_in);
-    printf("  resident_pages   : %d\n", after.resident_pages);
-
-    if (after.pages_swapped_in > 0)
-        printf("PASS: swap-ins occurred (%d)\n", after.pages_swapped_in);
-    else
-        printf("WARN: no swap-ins recorded\n");
-
-    printf("=== test_replacement done ===\n");
+    // Reap children
+    wait(0); wait(0);
+    printf("=== test_sched_aware done ===\n");
     exit(0);
 }

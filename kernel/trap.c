@@ -190,7 +190,7 @@ void kerneltrap()
       if (p->queue_level < NQUEUE - 1 && (p->to_demote && p->del_s < p->del_t))
       {
         p->queue_level++;
-        // printf("Process %d (%s) demoted to level %d\n", p->pid, p->name, p->queue_level);
+        printf("Process %d (%s) demoted to level %d\n", p->pid, p->name, p->queue_level);
       }
       p->ticks_cnsum = 0;
       release(&p->lock);

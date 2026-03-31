@@ -1,9 +1,20 @@
-// test_vmstats.c
-// Tests the getvmstats() system call:
-//   1. Stats are isolated per process (child's faults don't affect parent's count)
-//   2. Invalid PID returns -1
-//   3. Stats monotonically increase (never go backwards)
-//   4. resident_pages never exceeds MAX_FRAMES
+// test_replacement.c
+// Test 3: Force page replacement by exceeding MAXFRAMES
+//
+// What this tests:
+//   - Clock algorithm selects a victim when all frames full
+//   - pages_evicted increments on each eviction
+//   - pages_swapped_out increments as evicted pages go to swap
+//   - The process survives (not killed) when memory is full
+//   - Data integrity: written values survive eviction + swap-in cycle
+//
+// Strategy:
+//   Allocate MAXFRAMES+EXTRA pages.  Access them sequentially so the kernel
+//   must evict earlier pages to accommodate later ones.  Then re-read the
+//   earliest pages – each should trigger a swap-in fault and return the
+//   original value.
+//
+// Adjust MAXFRAMES below to match your kernel's MAXFRAMES constant.
 
 #include "kernel/types.h"
 #include "kernel/stat.h"
@@ -11,89 +22,93 @@
 #include "kernel/vmstats.h"
 
 #define PAGE_SIZE   4096
-#define FRAME_LIMIT 32      // match kernel MAX_FRAMES
-#define CHILD_PAGES 20
-#define PARENT_PAGES 15
+#define MAXFRAMES   64        // must match kernel/kalloc.c MAXFRAMES
+#define EXTRA       8         // pages beyond capacity to force evictions
+#define TOTAL_PAGES (MAXFRAMES + EXTRA)
 
-int
-main(void)
-{
-    struct vmstats st1, st2;
+static void dump(const char *tag, struct vmstats *s) {
+    printf("[repl] %s faults=%d evicted=%d sout=%d sin=%d resident=%d\n",
+           tag,
+           s->page_faults, s->pages_evicted,
+           s->pages_swapped_out, s->pages_swapped_in,
+           s->resident_pages);
+}
+
+int main(void) {
+    printf("=== Test 3: Page replacement (MAXFRAMES=%d, TOTAL=%d) ===\n",
+           MAXFRAMES, TOTAL_PAGES);
+
     int pid = getpid();
+    struct vmstats s0, s1;
 
-    printf("=== test_vmstats: System Call Correctness ===\n");
+    char *mem = sbrklazy(TOTAL_PAGES * PAGE_SIZE);
+    if (mem == (char *)-1) { printf("FAIL: sbrk\n"); exit(1); }
 
-    // --- Test 1: invalid PID ---
-    printf("[Test 1] Invalid PID\n");
-    if (getvmstats(-1, &st1) == -1)
-        printf("  PASS: getvmstats(-1) -> -1\n");
-    else
-        printf("  FAIL: getvmstats(-1) should return -1\n");
+    getvmstats(pid, &s0);
 
-    if (getvmstats(99999, &st1) == -1)
-        printf("  PASS: getvmstats(99999) -> -1\n");
-    else
-        printf("  FAIL: getvmstats(99999) should return -1\n");
-
-    // --- Test 2: stats start at zero (or low) for fresh process ---
-    printf("[Test 2] Fresh process stats\n");
-    getvmstats(pid, &st1);
-    printf("  Initial page_faults: %d\n", st1.page_faults);
-
-    // --- Test 3: Stats monotonically increase ---
-    printf("[Test 3] Monotonic increase\n");
-    char *mem = sbrk((uint64)PARENT_PAGES * PAGE_SIZE);
-    for (int i = 0; i < PARENT_PAGES; i++)
-        mem[i * PAGE_SIZE] = (char)i;
-
-    getvmstats(pid, &st2);
-    if (st2.page_faults >= st1.page_faults)
-        printf("  PASS: page_faults non-decreasing (%d -> %d)\n",
-               st1.page_faults, st2.page_faults);
-    else
-        printf("  FAIL: page_faults went backwards!\n");
-
-    if (st2.resident_pages <= FRAME_LIMIT)
-        printf("  PASS: resident_pages (%d) <= FRAME_LIMIT (%d)\n",
-               st2.resident_pages, FRAME_LIMIT);
-    else
-        printf("  FAIL: resident_pages (%d) > FRAME_LIMIT (%d)\n",
-               st2.resident_pages, FRAME_LIMIT);
-
-    // --- Test 4: Child stats are isolated from parent ---
-    printf("[Test 4] Per-process stat isolation\n");
-    getvmstats(pid, &st1); // parent baseline
-
-    int child_pid = fork();
-    if (child_pid == 0) {
-        // Child allocates its own pages
-        char *cmem = sbrk((uint64)CHILD_PAGES * PAGE_SIZE);
-        for (int i = 0; i < CHILD_PAGES; i++)
-            cmem[i * PAGE_SIZE] = (char)i;
-        // Child doesn't call getvmstats — just exits
-        exit(0);
+    // Write a unique sentinel to page[0] of each page
+    printf("Writing %d pages...\n", TOTAL_PAGES);
+    for (int i = 0; i < TOTAL_PAGES; i++) {
+        mem[i * PAGE_SIZE] = (char)(i + 1);   // sentinel = page_index+1
     }
 
-    wait(0); // wait for child
+    getvmstats(pid, &s1);
+    dump("after writing all pages", &s1);
 
-    getvmstats(pid, &st2); // parent after child ran
-    // Parent's page_faults should NOT have increased due to child's faults
-    int parent_delta = st2.page_faults - st1.page_faults;
-    if (parent_delta < CHILD_PAGES) // child's 20 faults shouldn't show in parent
-        printf("  PASS: parent page_faults unchanged by child activity (delta=%d)\n",
-               parent_delta);
+    int evictions = s1.pages_evicted - s0.pages_evicted;
+    if (evictions >= EXTRA)
+        printf("  PASS: at least %d evictions occurred (%d)\n", EXTRA, evictions);
     else
-        printf("  WARN: parent page_faults increased by %d — check isolation\n",
-               parent_delta);
+        printf("  FAIL: expected >= %d evictions, got %d\n", EXTRA, evictions);
 
-    // --- Test 5: getvmstats on zombie/dead child PID ---
-    printf("[Test 5] Dead child PID\n");
-    // child_pid is now dead; behavior is implementation-defined,
-    // but should not crash
-    int ret = getvmstats(child_pid, &st1);
-    printf("  getvmstats(dead child %d) returned %d (acceptable: -1 or 0)\n",
-           child_pid, ret);
+    if (s1.pages_swapped_out >= evictions)
+        printf("  PASS: pages_swapped_out=%d >= evictions=%d\n",
+               s1.pages_swapped_out, evictions);
+    else
+        printf("  WARN: swapped_out=%d < evictions=%d\n",
+               s1.pages_swapped_out, evictions);
 
-    printf("=== test_vmstats done ===\n");
-    exit(0);
+    // ----------------------------------------------------------------
+    // Verify data integrity: re-read ALL pages.
+    // Pages that were evicted must be swapped back in with correct data.
+    // ----------------------------------------------------------------
+    printf("Re-reading all %d pages (checking sentinels)...\n", TOTAL_PAGES);
+    int swap_in_before = s1.pages_swapped_in;
+    int errors = 0;
+
+    for (int i = 0; i < TOTAL_PAGES; i++) {
+        char expected = (char)(i + 1);
+        char got = mem[i * PAGE_SIZE];
+        if (got != expected) {
+            printf("  FAIL: page %d: expected %d got %d\n", i, (int)expected, (int)got);
+            errors++;
+        }
+    }
+
+    getvmstats(pid, &s1);
+    dump("after re-reading all pages", &s1);
+
+    int swap_ins = s1.pages_swapped_in - swap_in_before;
+    if (swap_ins > 0)
+        printf("  PASS: %d swap-ins occurred during re-read\n", swap_ins);
+    else
+        printf("  WARN: 0 swap-ins – either pages still resident or stat not updated\n");
+
+    if (errors == 0)
+        printf("  PASS: all %d page sentinels intact (data survives eviction)\n", TOTAL_PAGES);
+    else
+        printf("  FAIL: %d data corruption(s) detected\n", errors);
+
+    // ----------------------------------------------------------------
+    // Resident pages should not exceed MAXFRAMES
+    // ----------------------------------------------------------------
+    if (s1.resident_pages <= MAXFRAMES)
+        printf("  PASS: resident_pages=%d <= MAXFRAMES=%d\n",
+               s1.resident_pages, MAXFRAMES);
+    else
+        printf("  FAIL: resident_pages=%d > MAXFRAMES=%d (over-committed)\n",
+               s1.resident_pages, MAXFRAMES);
+
+    printf("=== Test 3 done (errors=%d) ===\n", errors);
+    exit(errors != 0);
 }

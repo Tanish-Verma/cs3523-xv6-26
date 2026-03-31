@@ -1,145 +1,97 @@
-// test_sched_aware.c
-// Tests scheduler-aware eviction: lower-priority (CPU-bound) children should
-// lose pages before higher-priority (interactive/high-queue) children.
+// test_swap.c
+// Stress-tests swap correctness by repeatedly cycling through a large array
+// that far exceeds physical memory, checking data integrity at each pass.
 //
-// Strategy:
-//   - Fork a LOW-priority child: runs a CPU spin loop first, dropping its
-//     MLFQ level, then allocates a working set.
-//   - Fork a HIGH-priority child: allocates its working set immediately
-//     (stays in top MLFQ queue).
-//   - Parent forces memory pressure by allocating its own large region.
-//   - Compare pages_evicted between the two children via getvmstats.
+// This verifies:
+//   - Swap-out stores correct data
+//   - Swap-in restores correct data
+//   - pages_swapped_in / pages_swapped_out counters increment
 
 #include "kernel/types.h"
 #include "kernel/stat.h"
 #include "user/user.h"
 #include "kernel/vmstats.h"
 
-#define PAGE_SIZE  4096
-#define WORK_PAGES 40      // working set per child
-#define SPIN_ITERS 5000000 // enough to burn through MLFQ quanta
+#define PAGE_SIZE   4096
+#define FRAME_LIMIT 32           // match your kernel's MAX_FRAMES
+#define NUM_PAGES   (FRAME_LIMIT * 4)
+#define NUM_PASSES  3
 
-// Shared memory between parent and children (via pipes)
-// Each child writes its PID to the pipe when ready.
+// Fill pattern: encodes both page index and pass number
+static inline char pattern(int page, int pass) {
+    return (char)((page * 7 + pass * 13) & 0xFF);
+}
 
 int
 main(void)
 {
-    int pipe_lo[2], pipe_hi[2];
-    pipe(pipe_lo);
-    pipe(pipe_hi);
+    struct vmstats st;
+    int pid = getpid();
 
-    printf("=== test_sched_aware: Scheduler-Aware Eviction Test ===\n");
+    printf("=== test_swap: Swap Correctness Stress Test ===\n");
+    printf("PID: %d | %d pages | %d passes\n", pid, NUM_PAGES, NUM_PASSES);
 
-    // --- Fork LOW-priority child ---
-    int pid_lo = fork();
-    if (pid_lo == 0) {
-        close(pipe_lo[0]);
-        close(pipe_hi[0]); close(pipe_hi[1]);
+    char *mem = sbrk((uint64)NUM_PAGES * PAGE_SIZE);
+    if (mem == (char *)-1) {
+        printf("FAIL: sbrk\n");
+        exit(1);
+    }
 
-        // Burn CPU to drop MLFQ priority
-        volatile int x = 0;
-        for (int i = 0; i < SPIN_ITERS; i++) x++;
+    int total_errs = 0;
 
-        // Allocate and touch working set
-        char *mem = sbrk((uint64)WORK_PAGES * PAGE_SIZE);
-        for (int i = 0; i < WORK_PAGES; i++)
-            mem[i * PAGE_SIZE] = (char)i;
+    for (int pass = 0; pass < NUM_PASSES; pass++) {
+        printf("\n--- Pass %d: writing patterns ---\n", pass);
 
-        // Signal parent we're ready
-        int mypid = getpid();
-        write(pipe_lo[1], &mypid, sizeof(mypid));
-        close(pipe_lo[1]);
+        // Write unique pattern per page
+        for (int i = 0; i < NUM_PAGES; i++)
+            mem[i * PAGE_SIZE] = pattern(i, pass);
 
-        // Keep working set alive while parent applies pressure
-        pause(20);
-
-        // Verify data integrity after potential evictions
+        // Read back (may cause additional evictions + swap-ins)
+        printf("--- Pass %d: reading back ---\n", pass);
         int errs = 0;
-        for (int i = 0; i < WORK_PAGES; i++)
-            if (mem[i * PAGE_SIZE] != (char)i) errs++;
+        for (int i = 0; i < NUM_PAGES; i++) {
+            char expected = pattern(i, pass);
+            char got = mem[i * PAGE_SIZE];
+            if (got != expected) {
+                printf("  ERR page %d: expected 0x%x got 0x%x\n",
+                       i, (unsigned char)expected, (unsigned char)got);
+                errs++;
+                if (errs > 10) { printf("  (stopping early)\n"); break; }
+            }
+        }
+        total_errs += errs;
+
+        getvmstats(pid, &st);
+        printf("  page_faults      : %d\n", st.page_faults);
+        printf("  pages_evicted    : %d\n", st.pages_evicted);
+        printf("  pages_swapped_out: %d\n", st.pages_swapped_out);
+        printf("  pages_swapped_in : %d\n", st.pages_swapped_in);
+        printf("  resident_pages   : %d\n", st.resident_pages);
+
         if (errs == 0)
-            printf("[LO-child] PASS: data intact after pressure\n");
+            printf("PASS: pass %d data integrity OK\n", pass);
         else
-            printf("[LO-child] WARN: %d pages corrupted\n", errs);
-
-        exit(0);
+            printf("FAIL: pass %d had %d data errors\n", pass, errs);
     }
 
-    // --- Fork HIGH-priority child ---
-    int pid_hi = fork();
-    if (pid_hi == 0) {
-        close(pipe_hi[0]);
-        close(pipe_lo[0]); close(pipe_lo[1]);
-
-        // Immediately allocate working set (stays at top MLFQ queue)
-        char *mem = sbrk((uint64)WORK_PAGES * PAGE_SIZE);
-        for (int i = 0; i < WORK_PAGES; i++)
-            mem[i * PAGE_SIZE] = (char)(i + 100);
-
-        int mypid = getpid();
-        write(pipe_hi[1], &mypid, sizeof(mypid));
-        close(pipe_hi[1]);
-
-        pause(20);
-
-        int errs = 0;
-        for (int i = 0; i < WORK_PAGES; i++)
-            if (mem[i * PAGE_SIZE] != (char)(i + 100)) errs++;
-        if (errs == 0)
-            printf("[HI-child] PASS: data intact after pressure\n");
-        else
-            printf("[HI-child] WARN: %d pages corrupted\n", errs);
-
-        exit(0);
-    }
-
-    // --- Parent: wait for both children to be ready ---
-    close(pipe_lo[1]); close(pipe_hi[1]);
-
-    int cpid_lo, cpid_hi;
-    read(pipe_lo[0], &cpid_lo, sizeof(cpid_lo));
-    read(pipe_hi[0], &cpid_hi, sizeof(cpid_hi));
-    close(pipe_lo[0]); close(pipe_hi[0]);
-
-    printf("LO-priority child PID: %d\n", cpid_lo);
-    printf("HI-priority child PID: %d\n", cpid_hi);
-
-    // Apply memory pressure: allocate a large region to push others out
-    int pressure_pages = 80;
-    char *pressure = sbrk((uint64)pressure_pages * PAGE_SIZE);
-    for (int i = 0; i < pressure_pages; i++)
-        pressure[i * PAGE_SIZE] = (char)i;
-
-    pause(5); // let eviction settle
-
-    // Read stats for both children
-    struct vmstats st_lo, st_hi;
-    if (getvmstats(cpid_lo, &st_lo) != 0) {
-        printf("FAIL: getvmstats for lo-child %d failed\n", cpid_lo);
-    } else {
-        printf("\n[LO-priority child %d]\n", cpid_lo);
-        printf("  pages_evicted   : %d\n", st_lo.pages_evicted);
-        printf("  pages_swapped_out:%d\n", st_lo.pages_swapped_out);
-        printf("  resident_pages  : %d\n", st_lo.resident_pages);
-    }
-
-    if (getvmstats(cpid_hi, &st_hi) != 0) {
-        printf("FAIL: getvmstats for hi-child %d failed\n", cpid_hi);
-    } else {
-        printf("[HI-priority child %d]\n", cpid_hi);
-        printf("  pages_evicted   : %d\n", st_hi.pages_evicted);
-        printf("  pages_swapped_out:%d\n", st_hi.pages_swapped_out);
-        printf("  resident_pages  : %d\n", st_hi.resident_pages);
-    }
-
-    if (st_lo.pages_evicted >= st_hi.pages_evicted)
-        printf("\nPASS: LO-priority process lost >= pages than HI-priority\n");
+    printf("\n=== Summary ===\n");
+    if (total_errs == 0)
+        printf("PASS: all passes completed with correct data\n");
     else
-        printf("\nFAIL: HI-priority process lost more pages than LO — check scheduler-aware eviction\n");
+        printf("FAIL: total data errors across all passes: %d\n", total_errs);
 
-    // Reap children
-    wait(0); wait(0);
-    printf("=== test_sched_aware done ===\n");
+    // Verify swap-in counter is non-zero (we definitely swapped)
+    getvmstats(pid, &st);
+    if (st.pages_swapped_in > 0)
+        printf("PASS: pages_swapped_in = %d (swap-in works)\n", st.pages_swapped_in);
+    else
+        printf("FAIL: pages_swapped_in == 0 — swap-in not being tracked\n");
+
+    if (st.pages_swapped_out > 0)
+        printf("PASS: pages_swapped_out = %d (swap-out works)\n", st.pages_swapped_out);
+    else
+        printf("FAIL: pages_swapped_out == 0\n");
+
+    printf("=== test_swap done ===\n");
     exit(0);
 }

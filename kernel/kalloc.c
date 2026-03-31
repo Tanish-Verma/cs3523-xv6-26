@@ -374,7 +374,7 @@ void *evict_page()
   struct proc *victim_p = frameTable[best_victim_index].proc;
   uint64 victim_va = frameTable[best_victim_index].va;
 
-  printf("evict pid=%d q=%d va=%ld pa=%p\n", victim_p->pid, victim_p->queue_level, victim_va, victim_pa);
+  // printf("evict pid=%d q=%d va=%ld pa=%p\n", victim_p->pid, victim_p->queue_level, victim_va, victim_pa);
 
   if (swap_out(victim_va, victim_p->pagetable, victim_pa) == -1)
   {
@@ -382,7 +382,7 @@ void *evict_page()
     return 0; // Return 0 to signal out-of-memory
   }
 
-  printf("swapped out pid=%d va=%ld to swap\n", victim_p->pid, victim_va);
+  // printf("swapped out pid=%d va=%ld to swap\n", victim_p->pid, victim_va);
 
   acquire(&victim_p->lock);
   victim_p->pages_swapped_out++;

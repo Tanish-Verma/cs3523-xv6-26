@@ -1,97 +1,88 @@
-// test_clock.c
-// Tests Clock algorithm behavior indirectly:
-// Pages accessed recently should survive longer than cold pages.
+// test_replacement.c
+// Forces page replacement by allocating more pages than the physical frame limit.
+// Verifies Clock eviction occurs and swapped pages can be read back.
 //
-// Strategy:
-//   1. Allocate a large region (hot + cold pages).
-//   2. Keep touching hot pages in a loop (so their reference bits stay set).
-//   3. Cold pages are never touched after initial fault.
-//   4. Apply memory pressure.
-//   5. Verify hot pages still hold correct data (they were protected by Clock).
-//   6. Verify cold pages may have been evicted (we don't check their data).
+// Assumes PHYS_FRAMES (the frame table size) is configured to something small,
+// e.g. 32 frames = 128 KB. Adjust FRAME_LIMIT below to match your kernel config.
 
 #include "kernel/types.h"
 #include "kernel/stat.h"
 #include "user/user.h"
 #include "kernel/vmstats.h"
 
-#define PAGE_SIZE    4096
-#define FRAME_LIMIT  32
-#define HOT_PAGES    10         // kept active — should not be evicted
-#define COLD_PAGES   15         // never touched again — likely evicted
-#define PRESSURE_PAGES (FRAME_LIMIT * 2)
+#define PAGE_SIZE   4096
+
+// Set this to the number of physical frames your kernel allows for user pages.
+// E.g. if you set MAX_FRAMES 32 in kalloc.c, set FRAME_LIMIT 32 here.
+#define FRAME_LIMIT 64
+
+// Allocate well beyond the frame limit to force eviction.
+#define NUM_PAGES   (FRAME_LIMIT * 3)
 
 int
 main(void)
 {
-    struct vmstats st;
+    struct vmstats before, after;
     int pid = getpid();
 
-    printf("=== test_clock: Clock Reference Bit Behavior ===\n");
+    printf("=== test_replacement: Clock Page Replacement Test ===\n");
+    printf("PID: %d | Frame limit: %d | Allocating: %d pages\n",
+           pid, FRAME_LIMIT, NUM_PAGES);
 
-    // Allocate hot + cold + pressure regions
-    char *hot  = sbrk((uint64)HOT_PAGES * PAGE_SIZE);
-    char *cold = sbrk((uint64)COLD_PAGES * PAGE_SIZE);
-
-    if (hot == (char *)-1 || cold == (char *)-1) {
-        printf("FAIL: sbrk\n");
+    char *mem = sbrk((uint64)NUM_PAGES * PAGE_SIZE);
+    if (mem == (char *)-1) {
+        printf("FAIL: sbrk failed\n");
         exit(1);
     }
 
-    // Initial touch of both regions
-    for (int i = 0; i < HOT_PAGES; i++)
-        hot[i * PAGE_SIZE] = (char)(0xAA);
+    // Snapshot stats before touching pages
+    getvmstats(pid, &before);
 
-    for (int i = 0; i < COLD_PAGES; i++)
-        cold[i * PAGE_SIZE] = (char)(0xBB);
-
-    // Keep refreshing hot pages (simulate reference bit being set)
-    for (int round = 0; round < 5; round++) {
-        for (int i = 0; i < HOT_PAGES; i++)
-            hot[i * PAGE_SIZE] = (char)(0xAA + round);
+    // --- Phase 1: Sequential write (fills frames, forces evictions) ---
+    printf("[Phase 1] Writing %d pages sequentially...\n", NUM_PAGES);
+    for (int i = 0; i < NUM_PAGES; i++) {
+        // Write a recognizable pattern
+        mem[i * PAGE_SIZE] = (char)(i & 0xFF);
     }
 
-    // Apply pressure to force evictions
-    char *pressure = sbrk((uint64)PRESSURE_PAGES * PAGE_SIZE);
-    if (pressure == (char *)-1) {
-        printf("FAIL: sbrk for pressure\n");
-        exit(1);
-    }
-    for (int i = 0; i < PRESSURE_PAGES; i++)
-        pressure[i * PAGE_SIZE] = (char)i;
+    getvmstats(pid, &after);
+    printf("  page_faults      : %d\n", after.page_faults - before.page_faults);
+    printf("  pages_evicted    : %d\n", after.pages_evicted - before.pages_evicted);
+    printf("  pages_swapped_out: %d\n", after.pages_swapped_out - before.pages_swapped_out);
+    printf("  resident_pages   : %d\n", after.resident_pages);
 
-    // Check hot pages — these should NOT have been evicted by Clock
-    printf("[Verifying HOT pages]\n");
-    int hot_errs = 0;
-    char expected_hot = (char)(0xAA + 4); // last value written
-    for (int i = 0; i < HOT_PAGES; i++) {
-        if (hot[i * PAGE_SIZE] != expected_hot) {
-            printf("  FAIL: hot page %d corrupted (got 0x%x expected 0x%x)\n",
-                   i,
-                   (unsigned char)hot[i * PAGE_SIZE],
-                   (unsigned char)expected_hot);
-            hot_errs++;
+    if (after.pages_evicted > 0)
+        printf("PASS: evictions occurred (%d)\n", after.pages_evicted);
+    else
+        printf("WARN: no evictions yet — increase NUM_PAGES or lower FRAME_LIMIT\n");
+
+    // --- Phase 2: Read back ALL pages (exercises swap-in) ---
+    printf("[Phase 2] Reading back all %d pages...\n", NUM_PAGES);
+    int errs = 0;
+    for (int i = 0; i < NUM_PAGES; i++) {
+        char expected = (char)(i & 0xFF);
+        if (mem[i * PAGE_SIZE] != expected) {
+            printf("FAIL: page %d: expected %d got %d\n",
+                   i, (int)(unsigned char)expected,
+                   (int)(unsigned char)mem[i * PAGE_SIZE]);
+            errs++;
+            if (errs > 5) { printf("  (too many errors, stopping)\n"); break; }
         }
     }
-    if (hot_errs == 0)
-        printf("  PASS: all %d hot pages intact\n", HOT_PAGES);
+    if (errs == 0)
+        printf("PASS: all %d pages read back correctly after eviction/swap-in\n",
+               NUM_PAGES);
+
+    getvmstats(pid, &after);
+    printf("[Phase 2 stats]\n");
+    printf("  pages_swapped_in : %d\n", after.pages_swapped_in);
+    printf("  resident_pages   : %d\n", after.resident_pages);
+
+    if (after.pages_swapped_in > 0)
+        printf("PASS: swap-ins occurred (%d)\n", after.pages_swapped_in);
     else
-        printf("  FAIL: %d hot pages corrupted — Clock may not be protecting recently used pages\n",
-               hot_errs);
+        printf("WARN: no swap-ins recorded\n");
 
-    getvmstats(pid, &st);
-    printf("\n--- VM Stats ---\n");
-    printf("  page_faults      : %d\n", st.page_faults);
-    printf("  pages_evicted    : %d\n", st.pages_evicted);
-    printf("  pages_swapped_out: %d\n", st.pages_swapped_out);
-    printf("  pages_swapped_in : %d\n", st.pages_swapped_in);
-    printf("  resident_pages   : %d\n", st.resident_pages);
-
-    if (st.pages_evicted > 0)
-        printf("PASS: evictions occurred — Clock algorithm is running\n");
-    else
-        printf("WARN: no evictions — increase PRESSURE_PAGES or lower FRAME_LIMIT\n");
-
-    printf("=== test_clock done ===\n");
+    printf("=== test_replacement done ===\n");
     exit(0);
 }
