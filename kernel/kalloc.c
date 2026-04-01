@@ -384,11 +384,9 @@ void *evict_page()
 
   // printf("swapped out pid=%d va=%ld to swap\n", victim_p->pid, victim_va);
 
-  acquire(&victim_p->lock);
   victim_p->pages_swapped_out++;
   victim_p->pages_evicted++;
   victim_p->resident_pages--;
-  release(&victim_p->lock);
 
   memset(victim_pa, 0, PGSIZE);
   //manually clear the frame table to entry to avoid race condition
