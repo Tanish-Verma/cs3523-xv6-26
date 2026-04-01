@@ -387,13 +387,16 @@ void *evict_page()
   acquire(&victim_p->lock);
   victim_p->pages_swapped_out++;
   victim_p->pages_evicted++;
+  victim_p->resident_pages--;
   release(&victim_p->lock);
 
   memset(victim_pa, 0, PGSIZE);
-  active_frames++; // To balance the decrement we will do in freeframeTable after the page is actually freed
+  //manually clear the frame table to entry to avoid race condition
+  frameTable[best_victim_index].in_use = 0;
+  frameTable[best_victim_index].proc = 0;
+  frameTable[best_victim_index].va = 0;
+  frameTable[best_victim_index].pa = 0;
   release(&frame_lock);
-  
-  freeframeTable(victim_pa);
 
   return victim_pa;
 }
