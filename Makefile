@@ -156,6 +156,7 @@ UPROGS=\
 	$U/_PA2_1\
 	$U/_H\
 	$U/_I\
+	$U/_J\
 
 
 fs.img: mkfs/mkfs README $(UPROGS)
