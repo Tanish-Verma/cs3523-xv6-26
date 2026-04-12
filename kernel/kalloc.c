@@ -308,6 +308,10 @@ void *evict_page()
       if (frameTable[i].in_use == 1)
       {
         struct proc *p = frameTable[i].proc;
+
+        if (p->state == RUNNING && p != myproc()) {
+            continue; 
+        }
         uint64 va = frameTable[i].va;
         pte_t *pte = walk(p->pagetable, va, 0);
 
@@ -382,6 +386,9 @@ void *evict_page()
     return 0; // Return 0 to signal out-of-memory
   }
 
+  if (victim_p == myproc()) {
+      sfence_vma_addr(victim_va);
+  }
   // printf("swapped out pid=%d va=%ld to swap\n", victim_p->pid, victim_va);
 
   victim_p->pages_swapped_out++;

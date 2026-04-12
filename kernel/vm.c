@@ -212,9 +212,9 @@ void uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
         {
           swap_free(a, pagetable);
         }
-        *pte = 0;
-        continue;
       }
+      *pte = 0;
+      continue;
     } // has physical page been allocated?
     if (do_free)
     {
