@@ -309,9 +309,9 @@ void *evict_page()
       {
         struct proc *p = frameTable[i].proc;
 
-        if (p->state == RUNNING && p != myproc()) {
-            continue; 
-        }
+        // if (p->state == RUNNING && p != myproc()) {
+        //     continue; 
+        // }
         uint64 va = frameTable[i].va;
         pte_t *pte = walk(p->pagetable, va, 0);
 

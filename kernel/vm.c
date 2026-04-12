@@ -19,6 +19,8 @@ extern char trampoline[]; // trampoline.S
 
 extern int active_frames;
 
+extern struct spinlock frame_lock;
+
 // Make a direct-map page table for the kernel.
 pagetable_t
 kvmmake(void)
@@ -562,7 +564,7 @@ int ismapped(pagetable_t pagetable, uint64 va)
   return 0;
 }
 
-extern struct spinlock frame_lock;
+
 void* get_user_frame() 
 {
   void *pa;
