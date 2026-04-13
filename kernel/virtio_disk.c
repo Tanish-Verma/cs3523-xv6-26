@@ -258,7 +258,7 @@ virtio_disk_rw(struct buf *b, int write)
   disk.desc[idx[1]].flags |= VRING_DESC_F_NEXT;
   disk.desc[idx[1]].next = idx[2];
 
-  disk.info[idx[0]].status = 0xff; // device writes 0 on success
+  disk.info[idx[0]].status = 0xff; // preset to error, device overwrites with 0 on success
   disk.desc[idx[2]].addr = (uint64) &disk.info[idx[0]].status;
   disk.desc[idx[2]].len = 1;
   disk.desc[idx[2]].flags = VRING_DESC_F_WRITE; // device writes the status

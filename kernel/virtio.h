@@ -91,6 +91,6 @@ struct virtq_used {
 // the block, and a one-byte status.
 struct virtio_blk_req {
   uint32 type; // VIRTIO_BLK_T_IN or ..._OUT
-  uint32 reserved;
-  uint64 sector;
+  uint32 reserved; // always 0, alignment padding
+  uint64 sector; // offset into fs.img = sector * 512
 };
