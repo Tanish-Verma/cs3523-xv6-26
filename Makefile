@@ -147,16 +147,6 @@ UPROGS=\
 	$U/_dorphan\
 	$U/_hello\
 	$U/_A\
-	$U/_B\
-	$U/_D\
-	$U/_E\
-	$U/_F\
-	$U/_G\
-	$U/_PA2_1\
-	$U/_H\
-	$U/_I\
-	$U/_J\
-	$U/_C\
 
 
 fs.img: mkfs/mkfs README $(UPROGS)

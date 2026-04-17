@@ -8,6 +8,7 @@
 #include "vm.h"
 #include "mlfqinfo.h"
 #include "vmstats.h"
+#include "diskstat.h"
 
 uint64
 sys_exit(void)
@@ -290,6 +291,56 @@ sys_getvmstats(void)
       stats.pages_swapped_in = p->pages_swapped_in;
       stats.pages_swapped_out = p->pages_swapped_out;
       stats.resident_pages = p->resident_pages;
+      release(&p->lock);
+      if (copyout(myproc()->pagetable, uaddr, (char *)&stats, sizeof(stats)) < 0)
+      {
+        return -2;
+      }
+      return 0;
+    }
+    release(&p->lock);
+  }
+  printf("Process with PID %d not found\n", pid);
+  return -1;
+}
+
+extern int disk_scheduling_policy;
+uint64
+sys_setdisksched(void)
+{
+  int sched;
+  argint(0, &sched);
+  if (sched != FCFS && sched != SSTF)
+  {
+    printf("Invalid disk scheduling policy: %d\n", sched);
+    return -1;
+  }
+  set_disk_policy(sched);
+  return 0;
+}
+
+uint64
+sys_getdiskstats(void)
+{
+  int pid;
+  uint64 uaddr;
+  argint(0, &pid);
+  argaddr(1, &uaddr);
+  if (pid <= 0)
+  {
+    printf("Invalid PID: %d\n", pid);
+    return -1;
+  }
+  struct diskstats stats = {0};
+  struct proc *p;
+  for (p = proc; p < &proc[NPROC]; p++)
+  {
+    acquire(&p->lock);
+    if (p->pid == pid && p->state != UNUSED)
+    {
+      stats.reads = p->disk_reads;
+      stats.writes = p->disk_writes;
+      stats.avg_latency = p->avg_disk_latency;
       release(&p->lock);
       if (copyout(myproc()->pagetable, uaddr, (char *)&stats, sizeof(stats)) < 0)
       {

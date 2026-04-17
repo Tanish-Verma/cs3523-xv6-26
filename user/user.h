@@ -3,6 +3,7 @@
 struct stat;
 struct mlfqinfo;
 struct vmstats;
+struct diskstats;
 
 // system calls
 int fork(void);
@@ -35,6 +36,8 @@ int getchildsyscount(int);
 int getlevel(void);
 int getmlfqinfo(int pid, struct mlfqinfo *info);
 int getvmstats(int pid, struct vmstats *stats);
+int setdisksched(int policy);
+int getdiskstats(int pid, struct diskstats *stats);
 
 // ulib.c
 int stat(const char *, struct stat *);

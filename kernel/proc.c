@@ -86,6 +86,11 @@ void procinit(void)
     p->pages_swapped_in = 0;
     p->pages_swapped_out = 0;
     p->resident_pages = 0;
+
+    // Initializing the disk read/write counters and average disk latency
+    p->disk_reads = 0;
+    p->disk_writes = 0;
+    p->avg_disk_latency = 0;
   }
 }
 
@@ -223,6 +228,9 @@ freeproc(struct proc *p)
   p->pages_swapped_in = 0;
   p->pages_swapped_out = 0;
   p->resident_pages = 0;
+  p->disk_reads = 0;
+  p->disk_writes = 0;
+  p->avg_disk_latency = 0;
 }
 
 // Create a user page table for a given process, with no user memory,

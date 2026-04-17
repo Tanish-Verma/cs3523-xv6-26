@@ -122,6 +122,9 @@ struct proc
   int pages_swapped_in;     // Number of pages swapped in
   int pages_swapped_out;    // Number of pages swapped out (same as evicted but for swapped processes)
   int resident_pages;       // Number of resident pages
+  int disk_reads;           // Number of disk reads
+  int disk_writes;          // Number of disk writes
+  int avg_disk_latency;   // Average disk latency
   
   // wait_lock must be held when using this:
   struct proc *parent; // Parent process
