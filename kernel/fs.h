@@ -14,6 +14,7 @@
 struct superblock {
   uint magic;        // Must be FSMAGIC
   uint size;         // Size of file system image (blocks)
+  uint swsize;       // Size of swap space (blocks)
   uint nblocks;      // Number of data blocks
   uint nswapblocks;  // Number of swap space blocks
   uint ninodes;      // Number of inodes.

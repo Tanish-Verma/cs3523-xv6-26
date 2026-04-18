@@ -62,9 +62,10 @@ void procinit(void)
     // initializing the ticks array
     int ticks = 2;
     int i;
-    for(i=0;i<NQUEUE;i++){
+    for (i = 0; i < NQUEUE; i++)
+    {
       p->ticks[i] = ticks;
-      ticks*= 2;
+      ticks *= 2;
     }
     // initializing the ticks_used array
     for (i = 0; i < NQUEUE; i++)
@@ -201,8 +202,11 @@ freeproc(struct proc *p)
   if (p->trapframe)
     kfree((void *)p->trapframe);
   p->trapframe = 0;
-  if (p->pagetable)
+  release(&p->lock);
+  if (p->pagetable){
     proc_freepagetable(p->pagetable, p->sz);
+  }
+  acquire(&p->lock);
   p->pagetable = 0;
   p->sz = 0;
   p->pid = 0;
@@ -336,6 +340,7 @@ int kfork(void)
   // Copy user memory from parent to child.
   if (uvmcopy(p->pagetable, np->pagetable, p->sz, np) < 0)
   {
+    printf("uvmcopy failed\n");
     freeproc(np);
     release(&np->lock);
     return -1;
@@ -414,7 +419,6 @@ void kexit(int status)
   p->cwd = 0;
 
   acquire(&wait_lock);
-
   // Give any children to init.
   reparent(p);
 
@@ -459,16 +463,18 @@ int kwait(uint64 addr)
         {
           // Found one.
           pid = pp->pid;
-          if (addr != 0 && copyout(p->pagetable, addr, (char *)&pp->xstate,
-                                   sizeof(pp->xstate)) < 0)
-          {
-            release(&pp->lock);
-            release(&wait_lock);
-            return -1;
-          }
-          freeproc(pp);
+          int child_status = pp->xstate;
           release(&pp->lock);
           release(&wait_lock);
+          
+          if (addr != 0 && copyout(p->pagetable, addr, (char *)&child_status,
+                                   sizeof(child_status)) < 0)
+          {
+            return -1;
+          }
+          acquire(&pp->lock);
+          freeproc(pp);
+          release(&pp->lock);
           return pid;
         }
         release(&pp->lock);
@@ -558,8 +564,21 @@ void sched(void)
 
   if (!holding(&p->lock))
     panic("sched p->lock"); // If the process is not holding a lock, panic
-  if (mycpu()->noff != 1)   // Only one level of lock must be there
+  if (mycpu()->noff != 1)
+  {
+    printf("mycpu()->noff = %d\n", mycpu()->noff);
+    printf("\n=== SCHED LOCKS PANIC! ===\n");
+    printf("CPU %d is holding %d locks:\n", cpuid(), mycpu()->noff);
+    for (int i = 0; i < 10; i++)
+    {
+      if (mycpu()->held_locks[i])
+      {
+        // Every spinlock has a 'name' string initialized in initlock()
+        printf("  - %s\n", mycpu()->held_locks[i]->name);
+      }
+    }
     panic("sched locks");
+  } // Only one level of lock must be there
   if (p->state == RUNNING) // Its state should not be running
     panic("sched RUNNING");
   if (intr_get()) // interrupts should be disabled

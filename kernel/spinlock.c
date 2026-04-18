@@ -40,6 +40,13 @@ acquire(struct spinlock *lk)
 
   // Record info about lock acquisition for holding() and debugging.
   lk->cpu = mycpu();
+  struct cpu *c = mycpu();
+  for(int i = 0; i < 10; i++) {
+      if(c->held_locks[i] == 0) { // Find first empty slot
+          c->held_locks[i] = lk;
+          break;
+      }
+  }
 }
 
 // Release the lock.
@@ -51,6 +58,14 @@ release(struct spinlock *lk)
 
   lk->cpu = 0;
 
+  struct cpu *c = mycpu();
+  for(int i = 0; i < 10; i++) {
+      if(c->held_locks[i] == lk) { // Find exactly this lock
+          c->held_locks[i] = 0;
+          break;
+      }
+  }
+  
   // Tell the C compiler and the CPU to not move loads or stores
   // past this point, to ensure that all the stores in the critical
   // section are visible to other CPUs before the lock is released,

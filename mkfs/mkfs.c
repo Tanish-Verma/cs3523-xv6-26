@@ -100,7 +100,8 @@ int main(int argc, char *argv[])
   nswapblocks = SWAPSIZE;
 
   sb.magic = FSMAGIC;
-  sb.size = xint(FSSIZE);
+  sb.size = xint(FSSIZE - SWAPSIZE);
+  sb.swsize = xint(SWAPSIZE);
   sb.nblocks = xint(nblocks);
   sb.ninodes = xint(NINODES);
   sb.nlog = xint(nlog);

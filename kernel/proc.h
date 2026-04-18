@@ -26,6 +26,8 @@ struct cpu
   struct context context; // swtch() here to enter scheduler().
   int noff;               // Depth of push_off() nesting.
   int intena;             // Were interrupts enabled before push_off()?
+
+  struct spinlock *held_locks[10];
 };
 
 extern struct cpu cpus[NCPU];
