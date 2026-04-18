@@ -15,11 +15,14 @@ struct superblock {
   uint magic;        // Must be FSMAGIC
   uint size;         // Size of file system image (blocks)
   uint nblocks;      // Number of data blocks
+  uint nswapblocks;  // Number of swap space blocks
   uint ninodes;      // Number of inodes.
   uint nlog;         // Number of log blocks
   uint logstart;     // Block number of first log block
   uint inodestart;   // Block number of first inode block
   uint bmapstart;    // Block number of first free map block
+  uint bmapswapstart; // Block number of first free swap space map block
+  uint swapstart;     // Block number of first swap space block
 };
 
 #define FSMAGIC 0x10203040

@@ -9,10 +9,11 @@
 #define MAXOPBLOCKS  10  // max # of blocks any FS op writes
 #define LOGBLOCKS    (MAXOPBLOCKS*3)  // max data blocks in on-disk log
 #define NBUF         (MAXOPBLOCKS*3)  // size of disk block cache
-#define FSSIZE       2000  // size of file system in blocks
+#define FSSIZE       4000  // size of file system in blocks
+#define SWAPSIZE     2000  // size of the swap space in blocks
 #define MAXPATH      256   // maximum file path name
 #define USERSTACK    1     // user stack pages
 #define NQUEUE       4     // number of queues in MLFQ
 #define FCFS         0     // first come first serve disk scheduling
 #define SSTF         1     // shortest seek time first disk scheduling
-#define ROTATIONAL_DELAY 1 // rotational delay
+#define ROTATIONAL_DELAY 7 // rotational delay
