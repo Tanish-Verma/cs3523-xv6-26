@@ -9,6 +9,7 @@ struct swap_entry
     pagetable_t pagetable;
     uint64 va;
     int blocks[4];
+    int swapped_out; // Flag to indicate if the page has been swapped out or is in the process of being swapped out
 };
 
 

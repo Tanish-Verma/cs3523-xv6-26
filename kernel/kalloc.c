@@ -47,68 +47,96 @@ void initswapspace()
     swapTable[i].in_use = 0;
     swapTable[i].pagetable = 0;
     swapTable[i].va = 0;
+    swapTable[i].swapped_out = 0;
     for (int j = 0; j < 4; j++)
     {
       swapTable[i].blocks[j] = -1;
     }
   }
 }
+
 void swap_in(uint64 va, pagetable_t pagetable, void *new_pa)
 {
+  // acquire lock
+  acquire(&swap_lock);
   int blocks[4] = {-1, -1, -1, -1};
   int found = 0;
-
-  acquire(&swap_lock);
-  for(int i = 0; i < NSWAPFRAMES; i++) {
-    if(swapTable[i].in_use == 1 &&
-       swapTable[i].pagetable == pagetable &&
-       swapTable[i].va == va) {
-
-      for(int j = 0; j < 4; j++) {
+  int slot = -1;
+  // search for the swap slot corresponding to this pagetable and virtual address
+  for (int i = 0; i < NSWAPFRAMES; i++)
+  {
+    if (swapTable[i].in_use == 1 && swapTable[i].pagetable == pagetable && swapTable[i].va == va)
+    {
+      while (swapTable[i].swapped_out == 0)
+      {
+        if (swapTable[i].in_use == 0)
+        {
+          release(&swap_lock);
+          return;
+          // sballoc failed during swap out, so the page is not actually swapped out
+        }
+        sleep(&swapTable[i], &swap_lock);
+      }
+      for (int j = 0; j < 4; j++)
+      {
         blocks[j] = swapTable[i].blocks[j];
-        swapTable[i].blocks[j] = 0;
+        swapTable[i].blocks[j] = -1;
       }
       swapTable[i].in_use = 0;
       swapTable[i].pagetable = 0;
       swapTable[i].va = 0;
       found = 1;
+      slot = i;
       break;
     }
   }
-  release(&swap_lock);  // release BEFORE any disk I/O
+  release(&swap_lock); // release BEFORE any disk I/O
 
-  if(!found) {
+  if (!found)
+  {
     printf("swap_in failed: va=%ld\n", va);
     panic("swap_in: page not found");
   }
 
-  for(int j = 0; j < 4; j++) {
+  for (int j = 0; j < 4; j++)
+  {
     struct buf *b = bread(ROOTDEV, blocks[j]);
-    memmove((char*)new_pa + j * BSIZE, b->data, BSIZE);
+    memmove((char *)new_pa + j * BSIZE, b->data, BSIZE);
     brelse(b);
     sbfree(ROOTDEV, blocks[j]);
   }
 
-  // Phase 3: update PTE
+  acquire(&swap_lock);
+  // update PTE
   pte_t *pte = walk(pagetable, va, 0);
-  if(pte == 0)
+  if (pte == 0)
+  {
     panic("swap_in: pte missing");
+  }
   int flags = PTE_FLAGS(*pte);
   *pte = PA2PTE(new_pa) | (flags & ~PTE_S) | PTE_V;
+
+  swapTable[slot].swapped_out = 0;
+  wakeup(&swapTable[slot]);
+  release(&swap_lock);
 }
 
 int swap_out(uint64 va, pagetable_t pagetable, void *pa_to_evict)
 {
+  acquire(&swap_lock);
 
-  int blocks[4] = {-1, -1, -1, -1};
-  for (int j = 0; j < 4; j++)
+  pte_t *pte = walk(pagetable, va, 0);
+  if (pte == 0 || (*pte & PTE_V) == 0)
   {
-    blocks[j] = sballoc(ROOTDEV);
-    if (blocks[j] == -1)
-      panic("swap_out: sballoc failed");
+    release(&swap_lock);
+    // Process exited and freed its page table after
+    // we evicted but before we swapped out
+    return -1;
   }
 
-  acquire(&swap_lock);
+  // Clear Valid bit, Set Swap bit.
+  *pte = (*pte & ~PTE_V) | PTE_S;
+
   int slot = -1;
   int found = 0;
 
@@ -117,67 +145,95 @@ int swap_out(uint64 va, pagetable_t pagetable, void *pa_to_evict)
 
     if (swapTable[i].in_use == 0)
     {
+      while (swapTable[i].swapped_out == 1)
+      {
+        sleep(&swapTable[i], &swap_lock);
+      }
       swapTable[i].in_use = 1;
       swapTable[i].pagetable = pagetable;
       swapTable[i].va = va;
-      for (int j = 0; j < 4; j++)
-      {
-        swapTable[i].blocks[j] = blocks[j];
-      }
-      
-      pte_t *pte = walk(pagetable, va, 0);
-      if (pte == 0)
-        panic("swap_out: pte missing");
-
-      // Clear Valid bit, Set Swap bit. Leave all other permission flags alone
-      *pte = (*pte & ~PTE_V) | PTE_S;
       found = 1;
       slot = i;
       break;
     }
   }
-  release(&swap_lock);
   if (!found)
   {
-    for(int j = 0; j < 4; j++){
-      sbfree(ROOTDEV, blocks[j]);
-    }
-    // return -1 to indicate that the swap out failed due to no free swap slots
-    //  The process will be killed by the caller when it sees the -1 return value
-    return -1;
+    release(&swap_lock);
+    return -1; // no swap slot available
   }
-  else
+  release(&swap_lock);
+
+  int blocks[4] = {-1, -1, -1, -1};
+  for (int j = 0; j < 4; j++)
   {
-    for (int i = 0; i < 4; i++)
+    blocks[j] = sballoc(ROOTDEV);
+
+    if (blocks[j] == -1)
     {
-      if (swapTable[slot].blocks[i] != -1)
+      // free already allocated blocks
+      for (int k = 0; k < j; k++)
       {
-        struct buf *b = bread(ROOTDEV, swapTable[slot].blocks[i]);
-        memmove(b->data, (char *)pa_to_evict + i * BSIZE, BSIZE);
-        bwrite(b);
-        brelse(b);
+        sbfree(ROOTDEV, blocks[k]);
       }
-      else
+
+      // restore PTE
+      acquire(&swap_lock);
+      pte_t *pte = walk(pagetable, va, 0);
+      if (pte)
       {
-        panic("swap_out: invalid swap block");
+        *pte = (*pte & ~PTE_S) | PTE_V;
       }
+
+      // clear slot
+      swapTable[slot].in_use = 0;
+      swapTable[slot].pagetable = 0;
+      swapTable[slot].va = 0;
+      wakeup(&swapTable[slot]);
+      release(&swap_lock);
+      return -1;
     }
   }
+
+  for (int i = 0; i < 4; i++)
+  {
+    struct buf *b = bread(ROOTDEV, blocks[i]);
+    memmove(b->data, (char *)pa_to_evict + i * BSIZE, BSIZE);
+    bwrite(b);
+    brelse(b);
+  }
+
+  acquire(&swap_lock);
+  for (int i = 0; i < 4; i++)
+  {
+    swapTable[slot].blocks[i] = blocks[i];
+  }
+  swapTable[slot].swapped_out = 1; // Mark the swap slot as swapped out after the swap out is complete
+  wakeup(&swapTable[slot]);        // Wake up any process waiting for this swap slot
+  release(&swap_lock);
 
   return 0;
 }
 
 void swap_free(uint64 va, pagetable_t pagetable)
 {
-  acquire(&swap_lock);
+  // Lock has to held before calling this function
+  if (!holding(&swap_lock))
+  {
+    panic("swap_free called without holding swap lock");
+  }
   int found = 0;
+  int slot = -1;
   int blocks[4] = {-1, -1, -1, -1};
   for (int i = 0; i < NSWAPFRAMES; i++)
   {
     // Find the exact swap slot for this pagetable and virtual address
     if (swapTable[i].in_use == 1 && swapTable[i].pagetable == pagetable && swapTable[i].va == va)
     {
-
+      while (swapTable[i].swapped_out == 0)
+      {
+        sleep(&swapTable[i], &swap_lock);
+      }
       // Clear the metadata
       swapTable[i].in_use = 0;
       swapTable[i].pagetable = 0;
@@ -188,21 +244,144 @@ void swap_free(uint64 va, pagetable_t pagetable)
         swapTable[i].blocks[j] = -1;
       }
       found = 1;
+      slot = i;
       break;
     }
   }
   release(&swap_lock);
 
-  if(found) {                      // ← only free if slot was found
-    for(int i = 0; i < 4; i++) {
-      if(blocks[i] != -1)          // ← extra safety check
+  if (found)
+  {
+    for (int i = 0; i < 4; i++)
+    {
+      if (blocks[i] != -1)
         sbfree(ROOTDEV, blocks[i]);
     }
+    acquire(&swap_lock);
+    swapTable[slot].swapped_out = 0; // Mark the swap slot as not swapped out
+    wakeup(&swapTable[slot]);        // Wake up any process waiting for this swap slot
   }
-   else {
+  else
+  {
     printf("swap_free: no swap slot found for va=%ld\n", va);
+    panic("swap free!");
   }
-  
+}
+
+void *evict_page()
+{
+  acquire(&frame_lock);
+
+  int best_victim_index = -1;
+  int worst_priority = -1;
+  int found = 0;
+  int stop_index = -1;
+
+  for (int pass = 0; pass < 2; pass++)
+  {
+    for (int step = 0; step < MAX_NFRAME; step++)
+    {
+      int i = (clock_hand + step) % MAX_NFRAME;
+
+      if (frameTable[i].in_use == 1)
+      {
+        struct proc *p = frameTable[i].proc;
+        uint64 va = frameTable[i].va;
+        pte_t *pte = walk(p->pagetable, va, 0);
+
+        if (pte != 0 && (*pte & PTE_V))
+        {
+          if (*pte & PTE_A)
+          {
+            if (!found)
+            {
+              *pte &= ~PTE_A;
+              sfence_vma_addr(va);
+            }
+            else
+            {
+              stop_index = i;
+              break;
+            }
+          }
+          else
+          {
+            if (!found)
+            {
+              best_victim_index = i;
+              worst_priority = p->queue_level;
+              found = 1;
+            }
+            else
+            {
+              if (p->queue_level > worst_priority)
+              {
+                best_victim_index = i;
+                worst_priority = p->queue_level;
+              }
+            }
+          }
+        }
+      }
+    }
+    if (best_victim_index != -1)
+      break;
+  }
+
+  if (best_victim_index == -1)
+  {
+
+    panic("evict_page: no victim found");
+  }
+
+  // update clock hand
+  if (stop_index != -1)
+  {
+    clock_hand = stop_index;
+  }
+  else
+  {
+    clock_hand = (best_victim_index + 1) % MAX_NFRAME;
+  }
+
+  // snapshot everything we need from the frame table
+  void *victim_pa = frameTable[best_victim_index].pa;
+  struct proc *victim_p = frameTable[best_victim_index].proc;
+  uint64 victim_va = frameTable[best_victim_index].va;
+
+  // clear frame table entry while still holding lock
+  // this prevents any other CPU from picking the same victim
+  frameTable[best_victim_index].in_use = 0;
+  frameTable[best_victim_index].proc = 0;
+  frameTable[best_victim_index].va = 0;
+  frameTable[best_victim_index].pa = 0;
+
+  // update stats while lock held
+  victim_p->pages_evicted++;
+  victim_p->resident_pages--;
+  victim_p->pages_swapped_out++;
+
+  // flush tlb for this page
+  if (victim_p == myproc())
+  {
+    sfence_vma_addr(victim_va);
+  }
+  // release BEFORE swap_out — swap_out does disk I/O which sleeps
+  release(&frame_lock);
+
+  if (swap_out(victim_va, victim_p->pagetable, victim_pa) == -1)
+  {
+    // swap failed
+    // no swap slot available or process exited and freed its page table after we evicted but before we swapped out
+    // in either case, we can't do anything with this page, so just return 0 kill the process due to OOM
+    victim_p->pages_swapped_out--;
+    // revert the increment we did to the stats since the swap out failed
+    return 0;
+  }
+
+  memset(victim_pa, 0, PGSIZE);
+
+  return victim_pa;
 }
 
 void initframeTable()
@@ -333,100 +512,4 @@ kalloc(void)
   if (r)
     memset((char *)r, 5, PGSIZE); // fill with junk
   return (void *)r;
-}
-
-void *evict_page()
-{
-  acquire(&frame_lock);
-
-  int best_victim_index = -1;
-  int worst_priority = -1;
-  int found = 0;
-  int stop_index = -1;
-
-  for(int pass = 0; pass < 2; pass++) {
-    for(int step = 0; step < MAX_NFRAME; step++) {
-      int i = (clock_hand + step) % MAX_NFRAME;
-
-      if(frameTable[i].in_use == 1) {
-        struct proc *p = frameTable[i].proc;
-        uint64 va = frameTable[i].va;
-        pte_t *pte = walk(p->pagetable, va, 0);
-
-        if(pte != 0 && (*pte & PTE_V)) {
-          if(*pte & PTE_A) {
-            if(!found) {
-              *pte &= ~PTE_A;
-              sfence_vma_addr(va);
-            } else {
-              stop_index = i;
-              break;
-            }
-          } else {
-            if(!found) {
-              best_victim_index = i;
-              worst_priority = p->queue_level;
-              found = 1;
-            } else {
-              if(p->queue_level > worst_priority) {
-                best_victim_index = i;
-                worst_priority = p->queue_level;
-              }
-            }
-          }
-        }
-      }
-    }
-    if(best_victim_index != -1)
-      break;
-  }
-
-  if(best_victim_index == -1){
-
-    panic("evict_page: no victim found");
-  }
-
-  // update clock hand
-  if(stop_index != -1){
-    clock_hand = stop_index;
-  }
-  else{
-    clock_hand = (best_victim_index + 1) % MAX_NFRAME;
-  }
-
-  // snapshot everything we need from the frame table
-  void *victim_pa    = frameTable[best_victim_index].pa;
-  struct proc *victim_p = frameTable[best_victim_index].proc;
-  uint64 victim_va   = frameTable[best_victim_index].va;
-
-  // clear frame table entry while still holding lock
-  // this prevents any other CPU from picking the same victim
-  frameTable[best_victim_index].in_use = 0;
-  frameTable[best_victim_index].proc   = 0;
-  frameTable[best_victim_index].va     = 0;
-  frameTable[best_victim_index].pa     = 0;
-
-  // update stats while lock held
-  victim_p->pages_evicted++;
-  victim_p->resident_pages--;
-
-  // release BEFORE swap_out — swap_out does disk I/O which sleeps
-  release(&frame_lock);
-
-
-  if(swap_out(victim_va, victim_p->pagetable, victim_pa) == -1) {
-    // swap failed — frame entry already cleared, page is lost
-    // caller will see 0 and signal OOM
-    return 0;
-  }
-
-  if(victim_p == myproc()){
-    sfence_vma_addr(victim_va);
-  }
-
-  victim_p->pages_swapped_out++;
-
-  memset(victim_pa, 0, PGSIZE);
-
-  return victim_pa;
 }

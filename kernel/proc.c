@@ -338,13 +338,16 @@ int kfork(void)
   }
 
   // Copy user memory from parent to child.
+  release(&np->lock); // release np->lock so that uvmcopy can acquire it
   if (uvmcopy(p->pagetable, np->pagetable, p->sz, np) < 0)
   {
     printf("uvmcopy failed\n");
+    acquire(&np->lock);
     freeproc(np);
     release(&np->lock);
     return -1;
   }
+  acquire(&np->lock);
   np->sz = p->sz;
 
   // copy saved user registers.

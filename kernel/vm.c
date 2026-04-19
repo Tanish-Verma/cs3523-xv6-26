@@ -194,6 +194,7 @@ uvmcreate()
 // Remove npages of mappings starting from va. va must be
 // page-aligned. It's OK if the mappings don't exist.
 // Optionally free the physical memory.
+extern struct spinlock swap_lock;
 void uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
 {
   uint64 a;
@@ -206,6 +207,8 @@ void uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
   {
     if ((pte = walk(pagetable, a, 0)) == 0) // leaf page table entry allocated?
       continue;
+
+    acquire(&swap_lock);
     if ((*pte & PTE_V) == 0)
     {
       if ((*pte & PTE_S))
@@ -216,6 +219,7 @@ void uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
         }
       }
       *pte = 0;
+      release(&swap_lock);
       continue;
     } // has physical page been allocated?
     if (do_free)
@@ -225,6 +229,7 @@ void uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
       kfree((void *)pa);
     }
     *pte = 0;
+    release(&swap_lock);
   }
 }
 
