@@ -77,33 +77,29 @@ void pipeclose(struct pipe *pi, int writable)
     release(&pi->lock);
 }
 
-int pipewrite(struct pipe *pi, uint64 addr, int n)
+int
+pipewrite(struct pipe *pi, uint64 addr, int n)
 {
   int i = 0;
   struct proc *pr = myproc();
 
   acquire(&pi->lock);
-  while (i < n)
-  {
-    if (pi->readopen == 0 || killed(pr))
-    {
+  while(i < n){
+    if(pi->readopen == 0 || killed(pr)){
       release(&pi->lock);
       return -1;
     }
-    if (pi->nwrite == pi->nread + PIPESIZE)
-    { // DOC: pipewrite-full
+    if(pi->nwrite == pi->nread + PIPESIZE){ //DOC: pipewrite-full
       wakeup(&pi->nread);
       sleep(&pi->nwrite, &pi->lock);
-    }
-    else
-    {
+    } else {
       char ch;
       release(&pi->lock);
-      int res = copyin(pr->pagetable, &ch, addr + i, 1);
-      acquire(&pi->lock);
-
-      if (res == -1)
+      if(copyin(pr->pagetable, &ch, addr + i, 1) == -1){
+        acquire(&pi->lock);
         break;
+      }
+      acquire(&pi->lock);
       pi->data[pi->nwrite++ % PIPESIZE] = ch;
       i++;
     }
@@ -114,38 +110,37 @@ int pipewrite(struct pipe *pi, uint64 addr, int n)
   return i;
 }
 
-int piperead(struct pipe *pi, uint64 addr, int n)
+int
+piperead(struct pipe *pi, uint64 addr, int n)
 {
   int i;
   struct proc *pr = myproc();
   char ch;
 
   acquire(&pi->lock);
-  while (pi->nread == pi->nwrite && pi->writeopen)
-  { // DOC: pipe-empty
-    if (killed(pr))
-    {
+  while(pi->nread == pi->nwrite && pi->writeopen){  //DOC: pipe-empty
+    if(killed(pr)){
       release(&pi->lock);
       return -1;
     }
-    sleep(&pi->nread, &pi->lock); // DOC: piperead-sleep
+    sleep(&pi->nread, &pi->lock); //DOC: piperead-sleep
   }
-  for (i = 0; i < n; i++)
-  { // DOC: piperead-copy
-    if (pi->nread == pi->nwrite)
+  for(i = 0; i < n; i++){  //DOC: piperead-copy
+    if(pi->nread == pi->nwrite)
       break;
     ch = pi->data[pi->nread % PIPESIZE];
-    pi->nread++;
-
     release(&pi->lock);
-    int res = copyout(pr->pagetable, addr + i, &ch, 1);
-    acquire(&pi->lock);
-
-    if (res == -1)
+    if(copyout(pr->pagetable, addr + i, &ch, 1) == -1) {
+      if(i == 0){
+        i = -1;
+      }
+      acquire(&pi->lock);
       break;
-    i++;
+    }
+    acquire(&pi->lock);
+    pi->nread++;
   }
-  wakeup(&pi->nwrite); // DOC: piperead-wakeup
+  wakeup(&pi->nwrite);  //DOC: piperead-wakeup
   release(&pi->lock);
   return i;
 }

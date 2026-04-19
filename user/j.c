@@ -81,7 +81,12 @@ int main(void)
             {
                 char exp = (char)((c * 100 + i + 1) & 0xFF);
                 if (mem[i * PAGE_SIZE] != exp)
+                {
+                    printf("  child %d ERROR: mem[%d*PAGE_SIZE] = %d != expected %d\n",
+                           c, i, mem[i * PAGE_SIZE], exp);
+                    printf("hello world\n");
                     rep.errors++;
+                }
             }
 
             // Capture stats for THIS child's pid only
@@ -105,6 +110,8 @@ int main(void)
                        c, s.page_faults, PAGES_EACH);
 
         done:
+            printf("child %d writing rep: pid=%d faults=%d evicted=%d\n",
+       c, rep.pid, rep.page_faults, rep.pages_evicted);
             write(pipes[c][1], &rep, sizeof(rep));
             close(pipes[c][1]);
             exit(0);
@@ -127,10 +134,12 @@ int main(void)
     for (int c = 0; c < N_CHILDREN; c++)
     {
         ChildReport *r = &reports[c];
-        printf("  child %d (pid=%d): faults=%d evicted=%d sout=%d sin=%d res=%d errors=%d\n",
+        printf("  child %d (pid=%d): faults=%d evicted=%d sout=%d sin=%d ",
                c, r->pid,
                r->page_faults, r->pages_evicted,
-               r->pages_swapped_out, r->pages_swapped_in,
+               r->pages_swapped_out, r->pages_swapped_in);
+
+        printf("res=%d errors=%d\n",
                r->resident_pages, r->errors);
         if (r->errors != 0)
             all_ok = 0;

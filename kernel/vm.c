@@ -215,6 +215,7 @@ void uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
       {
         if (do_free)
         {
+          // printf("uvmunmap: freeing swapped page va=%ld, pid=%d\n", a, myproc()->pid);
           swap_free(a, pagetable);
         }
       }
@@ -331,6 +332,7 @@ int uvmcopy(pagetable_t old, pagetable_t new, uint64 sz, struct proc *np)
 
   for (i = 0; i < sz; i += PGSIZE)
   {
+    retry:
     if ((pte = walk(old, i, 0)) == 0)
       continue; // page table entry hasn't been allocated
     if ((*pte & PTE_V) == 0)
@@ -338,6 +340,7 @@ int uvmcopy(pagetable_t old, pagetable_t new, uint64 sz, struct proc *np)
       if (*pte & PTE_S)
       {
         // This page is swapped out, we bring it into memory and copy it
+        // printf("h\n");
         if (vmfault(old, i, 0) == 0)
         {
           goto err;
@@ -348,11 +351,20 @@ int uvmcopy(pagetable_t old, pagetable_t new, uint64 sz, struct proc *np)
         continue;
       }
     }
+    mem = (char *)get_user_frame();
+    if (mem == 0){
+      goto err;
+    }
+    pte = walk(old, i, 0);
+    if ((*pte & PTE_V) == 0 && (*pte & PTE_S)) {
+      // Parent page was evicted! Free our allocated frame and retry this address.
+      freeframeTable((void *)mem);
+      kfree(mem);
+      goto retry;
+    }
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
-    mem = (char *)get_user_frame();
-    if (mem == 0)
-      goto err;
+
     memmove(mem, (char *)pa, PGSIZE);
     if (mappages(new, i, PGSIZE, (uint64)mem, flags) != 0)
     {
@@ -518,6 +530,7 @@ vmfault(pagetable_t pagetable, uint64 va, int read)
     return 0;
   }
   acquire(&p->lock);
+  // printf("vmfault: pid=%d va=%ld\n", p->pid, va);
   p->page_faults++;
   release(&p->lock);
   pte_t *pte = walk(pagetable, va, 0);
@@ -530,9 +543,12 @@ vmfault(pagetable_t pagetable, uint64 va, int read)
       printf("oom vmfault\n");
       return 0; // Kills the process
     }
-
-    swap_in(va, pagetable, new_pa);
     // printf("vmfault swapin pid=%d va=%ld pa=%p\n", p->pid, va, new_pa);
+    if (swap_in(va, pagetable, new_pa) != 0)
+    {
+      printf("vmfault swapin failed pid=%d va=%ld\n", p->pid, va);
+      return 0;
+    }
     acquire(&p->lock);
     p->pages_swapped_in++; // Increment the process's swapped in counter
     release(&p->lock);
