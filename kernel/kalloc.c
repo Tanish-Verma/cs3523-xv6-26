@@ -100,6 +100,7 @@ int swap_in(uint64 va, pagetable_t pagetable, void *new_pa)
     return -1;
   }
 
+  // write the 4 blocks back to physical memory
   for (int j = 0; j < 4; j++)
   {
     struct buf *b = bread(ROOTDEV, blocks[j]);
@@ -107,6 +108,7 @@ int swap_in(uint64 va, pagetable_t pagetable, void *new_pa)
     brelse(b);
     sbfree(ROOTDEV, blocks[j]);
   }
+
   acquire(&swap_lock);
   // update PTE
   pte_t *pte = walk(pagetable, va, 0);
@@ -199,6 +201,7 @@ int swap_out(uint64 va, pagetable_t pagetable, void *pa_to_evict)
     }
   }
 
+  // write the 4 blocks from physical memory to disk
   for (int i = 0; i < 4; i++)
   {
     struct buf *b = bread(ROOTDEV, blocks[i]);
@@ -259,6 +262,7 @@ void swap_free(uint64 va, pagetable_t pagetable)
 
   if (found)
   {
+    // Free the disk blocks associated with this swap slot
     for (int i = 0; i < 4; i++)
     {
       if (blocks[i] != -1)
@@ -461,7 +465,7 @@ void freeframeTable(void *pa)
 void kinit()
 {
   initlock(&kmem.lock, "kmem");
-  freerange(end, (void *)USABLE_PHYSTOP);
+  freerange(end, (void *)PHYSTOP);
 }
 
 void freerange(void *pa_start, void *pa_end)

@@ -123,6 +123,8 @@ void procdump(void);
 int sballoc(uint dev);
 void sbfree(uint dev, uint b);
 void sbzero(uint dev, uint b);
+void set_raid_mode(int mode);
+void set_failed_disk(int disk);
 
 // swtch.S
 void swtch(struct context *, struct context *);

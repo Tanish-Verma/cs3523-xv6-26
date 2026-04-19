@@ -38,6 +38,8 @@ int getmlfqinfo(int pid, struct mlfqinfo *info);
 int getvmstats(int pid, struct vmstats *stats);
 int setdisksched(int policy);
 int getdiskstats(int pid, struct diskstats *stats);
+int setraidmode(int mode);
+int setfaileddisk(int disk);
 
 // ulib.c
 int stat(const char *, struct stat *);

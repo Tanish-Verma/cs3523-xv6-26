@@ -31,3 +31,5 @@
 #define SYS_getvmstats 30
 #define SYS_setdisksched 31
 #define SYS_getdiskstats 32
+#define SYS_setraidmode  33
+#define SYS_setfaileddisk 34

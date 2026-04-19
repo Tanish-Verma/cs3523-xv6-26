@@ -353,3 +353,31 @@ sys_getdiskstats(void)
   printf("Process with PID %d not found\n", pid);
   return -1;
 }
+
+uint64
+sys_setraidmode(void)
+{
+  int mode;
+  argint(0, &mode);
+  if (mode != RAID0 && mode != RAID1 && mode != RAID5)
+  {
+    printf("Invalid RAID mode: %d\n", mode);
+    return -1;
+  }
+  set_raid_mode(mode);
+  return 0;
+}
+
+uint64
+sys_setfaileddisk(void)
+{
+  int disk;
+  argint(0, &disk);
+  if (disk < 0 || disk >= NDISKS)
+  {
+    printf("Invalid disk number: %d\n", disk);
+    return -1;
+  }
+  set_failed_disk(disk);
+  return 0;
+}

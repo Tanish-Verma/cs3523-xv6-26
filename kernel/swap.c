@@ -11,6 +11,34 @@
 #include "buf.h"
 
 extern struct superblock sb;
+uint16 RAID_MODE = RAID0;
+int failed_disk = -1;
+
+
+uint get_physical_block(int disk_id, uint block_offset) {
+    if (disk_id < 0 || disk_id >= NDISKS) {
+        panic("get_physical_block: invalid disk_id");
+    }
+    
+    if (block_offset >= DISKSIZE) {
+        panic("get_physical_block: block_offset exceeds virtual disk capacity");
+    }
+
+    uint physical_block = sb.swapstart + (disk_id * DISKSIZE) + block_offset;
+    
+    return physical_block;
+}
+
+
+void set_raid_mode(int mode) {
+    RAID_MODE = mode;
+    printf("RAID mode set to %d\n", mode);
+}
+
+void set_failed_disk(int disk) {
+    failed_disk = disk;
+    printf("Failed disk set to %d\n", disk);
+}
 
 void sbzero(uint dev, uint b)
 {

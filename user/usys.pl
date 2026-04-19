@@ -53,3 +53,5 @@ entry("getmlfqinfo");
 entry("getvmstats");
 entry("setdisksched");
 entry("getdiskstats");
+entry("setraidmode");
+entry("setfaileddisk");
