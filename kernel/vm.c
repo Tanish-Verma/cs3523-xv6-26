@@ -257,7 +257,7 @@ uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz, int xperm)
     memset(mem, 0, PGSIZE);
     if (mappages(pagetable, a, PGSIZE, (uint64)mem, PTE_R | PTE_U | xperm) != 0)
     {
-      kfree(mem);
+      decrease_user_frame((void *)mem);
       uvmdealloc(pagetable, a, oldsz);
       return 0;
     }
@@ -360,8 +360,8 @@ int uvmcopy(pagetable_t old, pagetable_t new, uint64 sz, struct proc *np)
     if ((*pte & PTE_V) == 0 && (*pte & PTE_S)) {
       // Parent page was evicted! Free our allocated frame and retry this address.
       release(&swap_lock);
-      freeframeTable((void *)mem);
-      kfree(mem);
+      printf("uvmcopy: page was evicted during copy, retrying pa=%p, pid=%d\n", (void *)mem, np->pid);
+      decrease_user_frame((void *)mem);
       goto retry;
     }
     pa = PTE2PA(*pte);
@@ -601,7 +601,15 @@ void* get_user_frame()
   } else {
     release(&frame_lock);
     pa = evict_page(); 
+    printf("get_user_frame: evicted page to free up frame, got pa=%p\n", pa);
   }
   
   return pa;
+}
+void decrease_user_frame(void *pa) 
+{
+  acquire(&frame_lock);
+  active_frames--;
+  release(&frame_lock);
+  kfree(pa);
 }

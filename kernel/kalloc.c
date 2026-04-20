@@ -92,7 +92,7 @@ int swap_in(uint64 va, pagetable_t pagetable, void *new_pa)
   }
   release(&swap_lock); // release BEFORE any disk I/O
   // printf("hello world!");
-  // printf("swap_in: swapped in va=%ld, pid=%d from slot=%d\n", va, myproc()->pid, slot);
+  printf("swap_in: swapped in va=%ld, pid=%d from slot=%d\n", va, myproc()->pid, slot);
   if (!found)
   {
     printf("swap_in failed: va=%ld, pid=%d\n", va, myproc()->pid);
@@ -168,7 +168,7 @@ retry:
   *pte = (*pte & ~PTE_V) | PTE_S;
   release(&swap_lock);
 
-  // printf("swap_out: swapped out va=%ld, pid=%d to slot=%d\n", va, myproc()->pid, slot);
+  printf("swap_out: swapped out va=%ld, pid=%d to slot=%d\n", va, myproc()->pid, slot);
 
   int blocks[4] = {-1, -1, -1, -1};
 
@@ -218,7 +218,7 @@ retry:
 void swap_free(uint64 va, pagetable_t pagetable)
 {
   // Lock has to held before calling this function
-  // printf("swap_free called for va=%ld, pid=%d\n", va, myproc()->pid);
+  printf("swap_free called for va=%ld, pid=%d\n", va, myproc()->pid);
   if (!holding(&swap_lock))
   {
     panic("swap_free called without holding swap lock");
@@ -270,6 +270,7 @@ void *evict_page()
 {
   acquire(&frame_lock);
 
+retry:
   int best_victim_index = -1;
   int worst_priority = -1;
   int found = 0;
@@ -351,8 +352,6 @@ void *evict_page()
   // this prevents any other CPU from picking the same victim
   // frameTable[best_victim_index].in_use = 0;
   frameTable[best_victim_index].proc = 0;
-  frameTable[best_victim_index].va = 0;
-  frameTable[best_victim_index].pa = 0;
 
   // update stats while lock held
   victim_p->pages_evicted++;
@@ -360,27 +359,37 @@ void *evict_page()
   victim_p->pages_swapped_out++;
 
   // flush tlb for this page
-  if (victim_p == myproc())
-  {
-    global_tlb_flush(victim_va);
-  }
+  global_tlb_flush(victim_va);
   // release BEFORE swap_out — swap_out does disk I/O which sleeps
   release(&frame_lock);
 
   if (swap_out(victim_va, victim_p->pagetable, victim_pa) == -1)
   {
-    // swap failed
-    // no swap slot available or process exited and freed its page table after we evicted but before we swapped out
-    // in either case, we can't do anything with this page, so just return 0 kill the process due to OOM
-    victim_p->pages_swapped_out--;
-    // revert the increment we did to the stats since the swap out failed
-    return 0;
+    acquire(&frame_lock);
+    if (frameTable[best_victim_index].pa == victim_pa)
+    {
+      // swap_out failed AND page wasn't freed by uvmunmap.
+      frameTable[best_victim_index].proc = victim_p;
+      victim_p->pages_evicted--;
+      victim_p->resident_pages++;
+      victim_p->pages_swapped_out--;
+      release(&frame_lock);
+      return 0;
+    }
+    else
+    {
+      // Page WAS freed by uvmunmap while we were sleeping!
+      release(&frame_lock);
+      goto retry;
+    }
   }
   memset(victim_pa, 0, PGSIZE);
 
   acquire(&frame_lock);
   // mark the victim frame as not in use in the frame table
+  frameTable[best_victim_index].va = 0;
   frameTable[best_victim_index].in_use = 0;
+  frameTable[best_victim_index].pa = 0;
   release(&frame_lock);
 
   return victim_pa;
@@ -409,10 +418,11 @@ void fillframeTable(void *pa, struct proc *p, uint64 va)
       frameTable[i].proc = p;
       frameTable[i].va = va;
       frameTable[i].pa = pa;
-      //  //debug print
-      //  if (p && p->pid > 2) {
-      //    // printf("[FrameTracker] Added: PID %d, VA %ld, PA %p\n", p->pid, va, pa);
-      //  }
+      // debug print
+      if (p && p->pid > 2)
+      {
+        // printf("[FrameTracker] Added: PID %d, VA %ld, PA %p\n", p->pid, va, pa);
+      }
 
       p->resident_pages++;
 
@@ -428,13 +438,14 @@ void fillframeTable(void *pa, struct proc *p, uint64 va)
 void freeframeTable(void *pa)
 {
   acquire(&frame_lock);
+  int found = 0;
   for (int i = 0; i < MAX_NFRAME; i++)
   {
     if (frameTable[i].pa == pa)
     {
       frameTable[i].in_use = 0;
       struct proc *p = frameTable[i].proc;
-      // printf("[FrameTracker] Freed PID:  %d\n", p ? p->pid : -1);
+      printf("[FrameTracker] Freed PID:  %d\n", p ? p->pid : -1);
       frameTable[i].proc = 0;
       frameTable[i].va = 0;
       frameTable[i].pa = 0;
@@ -443,9 +454,20 @@ void freeframeTable(void *pa)
         p->resident_pages--;
       }
       active_frames--;
+      found = 1;
       break;
     }
   }
+  if (!found)
+  {
+    for (int i = 0; i < MAX_NFRAME; i++)
+    {
+      printf("Frame Table Entry %d: in_use=%d, proc_pid=%d, va=%ld, pa=%p\n", i, frameTable[i].in_use, frameTable[i].proc ? frameTable[i].proc->pid : -1, frameTable[i].va, frameTable[i].pa);
+    }
+    printf("freeframeTable: physical address %p not found in frame table\n", pa);
+    panic("freeframeTable: physical address not found in frame table");
+  }
+
   release(&frame_lock);
 }
 
@@ -501,13 +523,13 @@ kalloc(void)
   if (!r)
   {
     void *stolen_pa = evict_page();
+    printf("kalloc: evicted page at %p\n", stolen_pa);
     // printf("kalloc: evict_page returned %p\n", stolen_pa);
     if (stolen_pa == 0)
     {
       printf("oom ram+swap exhausted\n");
       return 0;
     }
-
     memset((char *)stolen_pa, 5, PGSIZE);
     return stolen_pa;
   }

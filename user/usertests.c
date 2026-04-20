@@ -2799,7 +2799,7 @@ struct test {
   {iref, "iref"},
   {forktest, "forktest"},
   {sbrkbasic, "sbrkbasic"},
-  // {sbrkmuch, "sbrkmuch"},
+  {sbrkmuch, "sbrkmuch"},
   {kernmem, "kernmem"},
   {MAXVAplus, "MAXVAplus"},
   {sbrkfail, "sbrkfail"},
