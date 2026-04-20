@@ -218,6 +218,7 @@ void virtio_disk_init(void);
 void virtio_disk_rw(struct buf *, int);
 void virtio_disk_intr(void);
 void set_disk_policy(int);
+uint64 abs_diff(uint64 a, uint64 b);
 
 // number of elements in fixed-size array
 #define NELEM(x) (sizeof(x) / sizeof((x)[0]))
