@@ -92,7 +92,7 @@ int swap_in(uint64 va, pagetable_t pagetable, void *new_pa)
   }
   release(&swap_lock); // release BEFORE any disk I/O
   // printf("hello world!");
-  printf("swap_in: swapped in va=%ld, pid=%d from slot=%d\n", va, myproc()->pid, slot);
+  // printf("swap_in: swapped in va=%ld, pid=%d from slot=%d\n", va, myproc()->pid, slot);
   if (!found)
   {
     printf("swap_in failed: va=%ld, pid=%d\n", va, myproc()->pid);
@@ -168,7 +168,7 @@ retry:
   *pte = (*pte & ~PTE_V) | PTE_S;
   release(&swap_lock);
 
-  printf("swap_out: swapped out va=%ld, pid=%d to slot=%d\n", va, myproc()->pid, slot);
+  // // printf("swap_out: swapped out va=%ld, pid=%d to slot=%d\n", va, myproc()->pid, slot);
 
   int blocks[4] = {-1, -1, -1, -1};
 
@@ -218,7 +218,7 @@ retry:
 void swap_free(uint64 va, pagetable_t pagetable)
 {
   // Lock has to held before calling this function
-  printf("swap_free called for va=%ld, pid=%d\n", va, myproc()->pid);
+  // printf("swap_free called for va=%ld, pid=%d\n", va, myproc()->pid);
   if (!holding(&swap_lock))
   {
     panic("swap_free called without holding swap lock");
@@ -266,6 +266,9 @@ void swap_free(uint64 va, pagetable_t pagetable)
   }
 }
 
+
+
+
 void *evict_page()
 {
   acquire(&frame_lock);
@@ -282,7 +285,7 @@ retry:
     {
       int i = (clock_hand + step) % MAX_NFRAME;
 
-      if (frameTable[i].in_use == 1 && frameTable[i].proc != 0)
+      if (frameTable[i].in_use == 1 && frameTable[i].proc != 0 && frameTable[i].to_evict == 1)
       {
         struct proc *p = frameTable[i].proc;
         uint64 va = frameTable[i].va;
@@ -352,6 +355,7 @@ retry:
   // this prevents any other CPU from picking the same victim
   // frameTable[best_victim_index].in_use = 0;
   frameTable[best_victim_index].proc = 0;
+  frameTable[best_victim_index].to_evict = 1;
 
   // update stats while lock held
   victim_p->pages_evicted++;
@@ -403,7 +407,37 @@ void initframeTable()
     frameTable[i].in_use = 0;
     frameTable[i].proc = 0;
     frameTable[i].va = 0;
+    frameTable[i].pa = 0;
+    frameTable[i].to_evict = 1;
   }
+}
+
+void pin_frame(void* pa)
+{
+  acquire(&frame_lock);
+  for (int i = 0; i < MAX_NFRAME; i++)
+  {
+    if (frameTable[i].in_use == 1 &&  frameTable[i].pa == pa)
+    {
+      frameTable[i].to_evict = 0;
+      break;
+    }
+  }
+  release(&frame_lock);
+}
+
+void unpin_frame(void* pa)
+{
+  acquire(&frame_lock);
+  for (int i = 0; i < MAX_NFRAME; i++)
+  {
+    if (frameTable[i].in_use == 1 && frameTable[i].pa == pa)
+    {
+      frameTable[i].to_evict = 1;
+      break;
+    }
+  }
+  release(&frame_lock);
 }
 
 void fillframeTable(void *pa, struct proc *p, uint64 va)
@@ -445,10 +479,11 @@ void freeframeTable(void *pa)
     {
       frameTable[i].in_use = 0;
       struct proc *p = frameTable[i].proc;
-      printf("[FrameTracker] Freed PID:  %d\n", p ? p->pid : -1);
+      // printf("[FrameTracker] Freed PID:  %d\n", p ? p->pid : -1);
       frameTable[i].proc = 0;
       frameTable[i].va = 0;
       frameTable[i].pa = 0;
+      frameTable[i].to_evict = 1;
       if (p)
       {
         p->resident_pages--;
@@ -523,7 +558,7 @@ kalloc(void)
   if (!r)
   {
     void *stolen_pa = evict_page();
-    printf("kalloc: evicted page at %p\n", stolen_pa);
+    // printf("kalloc: evicted page at %p\n", stolen_pa);
     // printf("kalloc: evict_page returned %p\n", stolen_pa);
     if (stolen_pa == 0)
     {

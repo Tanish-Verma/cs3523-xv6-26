@@ -345,30 +345,33 @@ int uvmcopy(pagetable_t old, pagetable_t new, uint64 sz, struct proc *np)
         {
           goto err;
         }
+        pte = walk(old, i, 0);
+        if (pte == 0 || (*pte & PTE_V) == 0)
+        {
+          goto err;
+        }
       }
       else
       {
         continue;
       }
     }
-    mem = (char *)get_user_frame();
-    if (mem == 0){
-      goto err;
-    }
-    acquire(&swap_lock);
-    pte = walk(old, i, 0);
-    if ((*pte & PTE_V) == 0 && (*pte & PTE_S)) {
-      // Parent page was evicted! Free our allocated frame and retry this address.
-      release(&swap_lock);
-      printf("uvmcopy: page was evicted during copy, retrying pa=%p, pid=%d\n", (void *)mem, np->pid);
-      decrease_user_frame((void *)mem);
+    if ((*pte & PTE_V) == 0 && (*pte & PTE_S))
+    {
       goto retry;
     }
     pa = PTE2PA(*pte);
+    pin_frame((void *)pa); // Pin the frame to prevent eviction during copy
     flags = PTE_FLAGS(*pte);
 
+    mem = (char *)get_user_frame();
+    if (mem == 0)
+    {
+      goto err;
+    }
     memmove(mem, (char *)pa, PGSIZE);
-    release(&swap_lock);
+
+    unpin_frame((void *)pa); // Unpin the frame after copying
     if (mappages(new, i, PGSIZE, (uint64)mem, flags) != 0)
     {
       kfree(mem);
@@ -570,6 +573,7 @@ vmfault(pagetable_t pagetable, uint64 va, int read)
     kfree((void *)mem);
     return 0;
   }
+
   fillframeTable((void *)mem, p, va);
   return mem;
 }
@@ -588,25 +592,27 @@ int ismapped(pagetable_t pagetable, uint64 va)
   return 0;
 }
 
-
-void* get_user_frame() 
+void *get_user_frame()
 {
   void *pa;
   acquire(&frame_lock);
-  
-  if (active_frames < MAX_NFRAME) {
+
+  if (active_frames < MAX_NFRAME)
+  {
     active_frames++;
     release(&frame_lock);
     pa = kalloc();
-  } else {
-    release(&frame_lock);
-    pa = evict_page(); 
-    printf("get_user_frame: evicted page to free up frame, got pa=%p\n", pa);
   }
-  
+  else
+  {
+    release(&frame_lock);
+    pa = evict_page();
+    // printf("get_user_frame: evicted page to free up frame, got pa=%p\n", pa);
+  }
+
   return pa;
 }
-void decrease_user_frame(void *pa) 
+void decrease_user_frame(void *pa)
 {
   acquire(&frame_lock);
   active_frames--;

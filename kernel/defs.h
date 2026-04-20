@@ -16,6 +16,7 @@ struct frame_entry
     int in_use;
     struct proc *proc;
     uint64 va;
+    uint64 to_evict;
 };
 
 // bio.c
@@ -76,6 +77,8 @@ void fillframeTable(void *, struct proc *, uint64);
 void freeframeTable(void *);
 void swap_free(uint64, pagetable_t);
 void *evict_page(void);
+void pin_frame(void *);
+void unpin_frame(void *);
 
 // log.c
 void initlog(int, struct superblock *);
