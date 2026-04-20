@@ -2,7 +2,7 @@
 #define SWAP_H
 
 
-#define SSBLOCk(b, sb) ((b)/BPB + sb.bmapswapstart) // Block of free swap space map containing bit for block b
+#define SSBITMAP(b, sb) ((b)/BPB + sb.bmapswapstart) // Block of free swap space map containing bit for block b
 
 struct swap_entry
 {

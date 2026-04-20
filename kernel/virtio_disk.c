@@ -21,7 +21,7 @@
 #define R(r) ((volatile uint32 *)(VIRTIO0 + (r)))
 
 int disk_head = 0;
-int disk_scheduling_policy = FCFS; // default to first come first serve
+int disk_scheduling_policy = SSTF; // default to first come first serve
 int disk_busy = 0;
 
 struct disk_request {
@@ -249,31 +249,34 @@ void disk_schedule() {
   }
 
   int best_idx = 0;
+  uint64 dist_best = abs_diff(disk_queue.requests[best_idx].b->blockno, disk_head);
 
-  // --- SCHEDULING ALGORITHM ---
   // Start loop at 1 because we default best_idx to 0
   for(int i = 1; i < disk_queue.count; i++) {
-    
-    // 1. Check Priority First (Assuming lower queue_level value = higher priority)
-    if (disk_queue.requests[i].priority < disk_queue.requests[best_idx].priority) {
-      best_idx = i;
-    } 
-    // 2. If priorities tie, fall back to the selected policy
-    else if (disk_queue.requests[i].priority == disk_queue.requests[best_idx].priority) {
-      
-      if (disk_scheduling_policy == SSTF) {
-        uint64 dist_i = abs_diff(disk_queue.requests[i].b->blockno, disk_head);
-        uint64 dist_best = abs_diff(disk_queue.requests[best_idx].b->blockno, disk_head);
-        
-        if (dist_i < dist_best) {
-          best_idx = i;
-        }
+
+    // 1. Choose by scheduling policy first.
+    if (disk_scheduling_policy == SSTF) {
+      uint64 dist_i = abs_diff(disk_queue.requests[i].b->blockno, disk_head);
+
+      if (dist_i < dist_best) {
+        best_idx = i;
+        dist_best = dist_i;
       }
-      // If FCFS, we do nothing. The older request naturally stays the best_idx.
+      // 2. If the scheduling metric ties, use priority.
+      else if (dist_i == dist_best &&
+               disk_queue.requests[i].priority < disk_queue.requests[best_idx].priority) {
+        best_idx = i;
+        dist_best = dist_i;
+      }
+    }
+    if (disk_scheduling_policy == FCFS)
+    {
+      // FCFS keeps the oldest request as best_idx; no policy tie to resolve here.
+      break;
     }
   }
 
-  // --- EXTRACT WINNER ---
+  
   struct disk_request req = disk_queue.requests[best_idx];
   struct buf *b = req.b;
 
@@ -283,17 +286,15 @@ void disk_schedule() {
   }
   disk_queue.count--;
   
-  // Mark hardware as busy
   disk_busy = 1; 
 
   // --- CALCULATE LATENCY & STATS ---
-  uint64 distance = abs_diff(b->blockno, disk_head);;
 
   if (req.p) {
     if (req.is_write) req.p->disk_writes++;
     else req.p->disk_reads++;
 
-    req.p->avg_disk_latency = (req.p->avg_disk_latency * (req.p->disk_reads + req.p->disk_writes - 1) + (distance + ROTATIONAL_DELAY)*100) / (req.p->disk_reads + req.p->disk_writes);
+    req.p->avg_disk_latency = (req.p->avg_disk_latency * (req.p->disk_reads + req.p->disk_writes - 1) + (dist_best + ROTATIONAL_DELAY)*100) / (req.p->disk_reads + req.p->disk_writes);
   }
 
   // Update physical head position
@@ -356,7 +357,6 @@ void virtio_disk_rw(struct buf *b, int write)
   new_req.is_write = write;
   new_req.p = p;
   
-  // Replace 'queue_level' with whatever variable you used in PA2 for priority
   new_req.priority = p->queue_level; 
 
   // 2. Add to queue
@@ -369,7 +369,7 @@ void virtio_disk_rw(struct buf *b, int write)
   // Set buffer state to waiting
   b->disk = 1;
 
-  // 3. Kick the scheduler (it will dispatch if hardware is idle)
+  // Kick the scheduler
   disk_schedule();
 
   // 4. Wait for interrupt to clear b->disk

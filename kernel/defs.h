@@ -120,11 +120,13 @@ int either_copyin(void *dst, int user_src, uint64 src, uint64 len);
 void procdump(void);
 
 // swap.c
-int sballoc(uint dev);
-void sbfree(uint dev, uint b);
+int sballoc(uint dev, int *blocks);
+void sbfree(uint dev, int *blocks);
 void sbzero(uint dev, uint b);
 void set_raid_mode(int mode);
 void set_failed_disk(int disk);
+void sread(uint dev, uint logical_block, char *data);
+void swrite(uint dev, uint logical_block, char *data);
 
 // swtch.S
 void swtch(struct context *, struct context *);

@@ -103,11 +103,10 @@ int swap_in(uint64 va, pagetable_t pagetable, void *new_pa)
   // write the 4 blocks back to physical memory
   for (int j = 0; j < 4; j++)
   {
-    struct buf *b = bread(ROOTDEV, blocks[j]);
-    memmove((char *)new_pa + j * BSIZE, b->data, BSIZE);
-    brelse(b);
-    sbfree(ROOTDEV, blocks[j]);
+    sread(ROOTDEV, blocks[j], (char *)new_pa + j * BSIZE);
   }
+
+  sbfree(ROOTDEV, blocks);
 
   acquire(&swap_lock);
   // update PTE
@@ -140,7 +139,7 @@ int swap_out(uint64 va, pagetable_t pagetable, void *pa_to_evict)
   int slot = -1;
   int found = 0;
 
-  retry:
+retry:
   for (int i = 0; i < NSWAPFRAMES; i++)
   {
     if (swapTable[i].in_use == 0)
@@ -172,42 +171,34 @@ int swap_out(uint64 va, pagetable_t pagetable, void *pa_to_evict)
   // printf("swap_out: swapped out va=%ld, pid=%d to slot=%d\n", va, myproc()->pid, slot);
 
   int blocks[4] = {-1, -1, -1, -1};
-  for (int j = 0; j < 4; j++)
+
+  int rc = sballoc(ROOTDEV, blocks);
+
+  if (rc == -1)
   {
-    blocks[j] = sballoc(ROOTDEV);
+    // free already allocated blocks
+    sbfree(ROOTDEV, blocks);
 
-    if (blocks[j] == -1)
+    // restore PTE
+    acquire(&swap_lock);
+    if (pte)
     {
-      // free already allocated blocks
-      for (int k = 0; k < j; k++)
-      {
-        sbfree(ROOTDEV, blocks[k]);
-      }
-
-      // restore PTE
-      acquire(&swap_lock);
-      if (pte)
-      {
-        *pte = (*pte & ~PTE_S) | PTE_V;
-      }
-
-      // clear slot
-      swapTable[slot].in_use = 0;
-      swapTable[slot].pagetable = 0;
-      swapTable[slot].va = 0;
-      wakeup(&swapTable[slot]);
-      release(&swap_lock);
-      return -1;
+      *pte = (*pte & ~PTE_S) | PTE_V;
     }
+
+    // clear slot
+    swapTable[slot].in_use = 0;
+    swapTable[slot].pagetable = 0;
+    swapTable[slot].va = 0;
+    wakeup(&swapTable[slot]);
+    release(&swap_lock);
+    return -1;
   }
 
   // write the 4 blocks from physical memory to disk
   for (int i = 0; i < 4; i++)
   {
-    struct buf *b = bread(ROOTDEV, blocks[i]);
-    memmove(b->data, (char *)pa_to_evict + i * BSIZE, BSIZE);
-    bwrite(b);
-    brelse(b);
+    swrite(ROOTDEV, blocks[i], (char *)pa_to_evict + i * BSIZE);
   }
 
   acquire(&swap_lock);
@@ -263,11 +254,7 @@ void swap_free(uint64 va, pagetable_t pagetable)
   if (found)
   {
     // Free the disk blocks associated with this swap slot
-    for (int i = 0; i < 4; i++)
-    {
-      if (blocks[i] != -1)
-        sbfree(ROOTDEV, blocks[i]);
-    }
+    sbfree(ROOTDEV, blocks);
     acquire(&swap_lock);
     swapTable[slot].swapped_out = 0; // Mark the swap slot as not swapped out
     wakeup(&swapTable[slot]);        // Wake up any process waiting for this swap slot
