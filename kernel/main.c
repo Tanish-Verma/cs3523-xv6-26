@@ -5,7 +5,8 @@
 #include "defs.h"
 
 volatile static int started = 0;
-
+int active_harts[NCPU];
+// Local sequence number for this hart
 // start() jumps here in supervisor mode on all CPUs.
 void
 main()
@@ -20,6 +21,7 @@ main()
     initswapspace(); // initialize swap table
     kvminit();       // create kernel page table
     initframeTable(); // initialize frame table
+    tlb_shootdown_init(); // initialize tlb shootdown lock
     kvminithart();   // turn on paging
     procinit();      // process table
     trapinit();      // trap vectors
@@ -32,12 +34,14 @@ main()
     virtio_disk_init(); // emulated hard disk
     userinit();      // first user process
     __sync_synchronize();
+    active_harts[cpuid()] = 1;
     started = 1;
   } else {
     while(started == 0)
       ;
     __sync_synchronize();
     printf("hart %d starting\n", cpuid());
+    active_harts[cpuid()] = 1;
     kvminithart();    // turn on paging
     trapinithart();   // install kernel trap vector
     plicinithart();   // ask PLIC for device interrupts

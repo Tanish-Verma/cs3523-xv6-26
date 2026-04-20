@@ -255,6 +255,10 @@ void clockintr()
   w_stimecmp(r_time() + 1000000);
 }
 
+static uint64 local_tlb_seq[NCPU] = {0}; 
+extern uint64 global_tlb_va;
+extern uint64 global_tlb_seq;
+extern struct spinlock tlb_shootdown_lock;
 // check if it's an external interrupt or software interrupt,
 // and handle it.
 // returns 2 if timer interrupt,
@@ -295,6 +299,27 @@ int devintr()
   else if (scause == 0x8000000000000005L)
   {
     // timer interrupt.
+    int id = cpuid();
+    if (local_tlb_seq[id] != global_tlb_seq) {
+      // We missed a TLB flush! Let's check how many we missed.
+      
+      acquire(&tlb_shootdown_lock);
+      uint64 missed_count = global_tlb_seq - local_tlb_seq[id];
+      uint64 target_va = global_tlb_va;
+      release(&tlb_shootdown_lock);
+      // printf("CPU %d missed %ld TLB shootdowns! Flushing TLB.\n", id, missed_count);
+      if (missed_count == 1) {
+          // We only missed exactly one update. We can safely do a targeted flush!
+          sfence_vma_addr(target_va);
+      } else {
+          // We missed multiple updates. The target_va variable was overwritten 
+          // multiple times. We have no choice but to do a full flush to be safe.
+          sfence_vma();
+      }
+      
+      // Catch our local sequence up to the global sequence
+      local_tlb_seq[id] = global_tlb_seq;
+  }
     clockintr();
     return 2;
   }

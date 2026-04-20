@@ -355,9 +355,11 @@ int uvmcopy(pagetable_t old, pagetable_t new, uint64 sz, struct proc *np)
     if (mem == 0){
       goto err;
     }
+    acquire(&swap_lock);
     pte = walk(old, i, 0);
     if ((*pte & PTE_V) == 0 && (*pte & PTE_S)) {
       // Parent page was evicted! Free our allocated frame and retry this address.
+      release(&swap_lock);
       freeframeTable((void *)mem);
       kfree(mem);
       goto retry;
@@ -366,6 +368,7 @@ int uvmcopy(pagetable_t old, pagetable_t new, uint64 sz, struct proc *np)
     flags = PTE_FLAGS(*pte);
 
     memmove(mem, (char *)pa, PGSIZE);
+    release(&swap_lock);
     if (mappages(new, i, PGSIZE, (uint64)mem, flags) != 0)
     {
       kfree(mem);

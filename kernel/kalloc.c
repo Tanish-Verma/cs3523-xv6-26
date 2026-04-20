@@ -275,7 +275,7 @@ void *evict_page()
   int found = 0;
   int stop_index = -1;
 
-  for (int pass = 0; pass < 2; pass++)
+  for (int pass = 0; 1; pass++)
   {
     for (int step = 0; step < MAX_NFRAME; step++)
     {
@@ -294,7 +294,7 @@ void *evict_page()
             if (!found)
             {
               *pte &= ~PTE_A;
-              sfence_vma_addr(va);
+              global_tlb_flush(va);
             }
             else
             {
@@ -362,7 +362,7 @@ void *evict_page()
   // flush tlb for this page
   if (victim_p == myproc())
   {
-    sfence_vma_addr(victim_va);
+    global_tlb_flush(victim_va);
   }
   // release BEFORE swap_out — swap_out does disk I/O which sleeps
   release(&frame_lock);
@@ -501,7 +501,7 @@ kalloc(void)
   if (!r)
   {
     void *stolen_pa = evict_page();
-    printf("kalloc: evict_page returned %p\n", stolen_pa);
+    // printf("kalloc: evict_page returned %p\n", stolen_pa);
     if (stolen_pa == 0)
     {
       printf("oom ram+swap exhausted\n");

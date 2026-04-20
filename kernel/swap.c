@@ -81,7 +81,7 @@ int sballoc(uint dev, int *blocks)
             if ((bp->data[bi / 8] & m) == 0)
             {
                 bp->data[bi / 8] |= m;
-
+                // printf("sballoc: allocated swap block %d\n", b + bi);
                 blocks[found] = b + bi;
                 found++;
             }

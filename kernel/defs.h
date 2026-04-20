@@ -169,6 +169,11 @@ void trapinithart(void);
 extern struct spinlock tickslock;
 void prepare_return(void);
 
+//tlb.c
+void tlb_shootdown_init();
+void global_tlb_flush(uint64 va);
+
+
 // uart.c
 void uartinit(void);
 void uartintr(void);
