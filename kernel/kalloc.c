@@ -166,6 +166,7 @@ retry:
 
   // ONLY modify PTE after we successfully secured a swap slot
   *pte = (*pte & ~PTE_V) | PTE_S;
+  global_tlb_flush(va);
   release(&swap_lock);
 
   // // printf("swap_out: swapped out va=%ld, pid=%d to slot=%d\n", va, myproc()->pid, slot);

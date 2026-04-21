@@ -375,7 +375,7 @@ int uvmcopy(pagetable_t old, pagetable_t new, uint64 sz, struct proc *np)
     unpin_frame((void *)pa); // Unpin the frame after copying
     if (mappages(new, i, PGSIZE, (uint64)mem, flags) != 0)
     {
-      kfree(mem);
+      decrease_user_frame((void *)mem);
       goto err;
     }
     fillframeTable((void *)mem, np, i);
@@ -554,6 +554,7 @@ vmfault(pagetable_t pagetable, uint64 va, int read)
     if (swap_in(va, pagetable, new_pa) != 0)
     {
       printf("vmfault swapin failed pid=%d va=%ld\n", p->pid, va);
+      decrease_user_frame(new_pa);
       return 0;
     }
     acquire(&p->lock);
@@ -571,7 +572,7 @@ vmfault(pagetable_t pagetable, uint64 va, int read)
   memset((void *)mem, 0, PGSIZE);
   if (mappages(p->pagetable, va, PGSIZE, mem, PTE_W | PTE_U | PTE_R) != 0)
   {
-    kfree((void *)mem);
+    decrease_user_frame((void *)mem);
     return 0;
   }
 
