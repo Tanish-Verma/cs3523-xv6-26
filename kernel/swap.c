@@ -27,14 +27,79 @@ uint get_physical_block(int disk_id, uint block_offset)
 
 void set_raid_mode(int mode)
 {
+    int old_mode = RAID_MODE;
     RAID_MODE = mode;
     printf("RAID mode set to %d\n", mode);
+
+    if (mode == RAID5 && old_mode != RAID5)
+    {
+        for (uint offset = 0; offset < DISKSIZE; offset++)
+        {
+            uint parity_disk = offset % NDISKS; // Parity disk for this stripe
+            char *new_parity = (char *)kalloc();
+            if (!new_parity) panic("set_raid_mode: OOM");
+            memset(new_parity, 0, BSIZE);
+
+            // XOR all data disks in the stripe
+            for (int d = 0; d < NDISKS; d++)
+            {
+                if (d == parity_disk) continue;
+                
+                uint phys = get_physical_block(d, offset);
+                struct buf *b = bread(ROOTDEV, phys); 
+                for (int j = 0; j < BSIZE; j++)
+                    new_parity[j] ^= b->data[j];
+                brelse(b);
+            }
+
+            // Write the valid parity to the parity disk
+            uint phys_parity = get_physical_block(parity_disk, offset);
+            struct buf *pb = bread(ROOTDEV, phys_parity);
+            memmove(pb->data, new_parity, BSIZE);
+            bwrite(pb);
+            brelse(pb);
+            kfree(new_parity);
+        }
+    }
 }
 
 void set_failed_disk(int disk)
 {
+    int old_failed = failed_disk;
     failed_disk = disk;
     printf("Failed disk set to %d\n", disk);
+
+    // If we are repairing a disk (switching the failure to a different disk)
+    if (RAID_MODE == RAID5 && old_failed != -1 && old_failed != disk)
+    {
+        // Rebuild the previously failed disk to clear stale data/parity
+        for (uint offset = 0; offset < DISKSIZE; offset++)
+        {
+            char * reconstructed = (char *)kalloc();
+            memset(reconstructed, 0, BSIZE);
+
+            // Reconstruct from all surviving disks
+            for (int d = 0; d < NDISKS; d++)
+            {
+                if (d == old_failed) continue;
+                
+                uint phys = get_physical_block(d, offset);
+                struct buf *b = bread(ROOTDEV, phys); // Usually ROOTDEV or 1
+                for (int j = 0; j < BSIZE; j++)
+                    reconstructed[j] ^= b->data[j];
+                brelse(b);
+            }
+            // printf("Rebuilt block offset %d for repaired disk %d\n", offset, old_failed);
+            // Write the rebuilt data back to the repaired disk
+            uint phys_rebuild = get_physical_block(old_failed, offset);
+            struct buf *b = bread(ROOTDEV, phys_rebuild);
+            memmove(b->data, reconstructed, BSIZE);
+            bwrite(b);
+            brelse(b);
+
+            kfree(reconstructed);
+        }
+    }
 }
 
 // Get the mirror logical block for RAID 1.
@@ -141,34 +206,51 @@ int sballoc(uint dev, int *blocks)
                 uint primary_logical = b + bi;
                 uint mirror_logical = get_raid1_mirror_block(primary_logical);
 
-                // Check if primary is free and not on failed disk, and mirror is within bounds and not on failed disk
+                // 1. Check if primary is free and disks haven't failed
                 if ((bp->data[bi / 8] & (1 << (bi % 8))) == 0 &&
                     (primary_logical % NDISKS) != failed_disk &&
                     mirror_logical < (uint)sb.swsize &&
                     (mirror_logical % NDISKS) != failed_disk)
                 {
-                    // Mark primary
-                    bp->data[bi / 8] |= (1 << (bi % 8));
-
-                    // Handle Mirror
+                    // 2. Check if mirror is ALSO free
+                    int mbi = mirror_logical % BPB;
                     uint mirror_bmap = SSBITMAP(mirror_logical, sb);
+                    int mirror_is_free = 0;
+
                     if (mirror_bmap == SSBITMAP(primary_logical, sb))
                     {
-                        // Mirror is in same buffer
-                        int mbi = mirror_logical % BPB;
-                        bp->data[mbi / 8] |= (1 << (mbi % 8));
+                        // Mirror is in the same buffer we already hold
+                        mirror_is_free = ((bp->data[mbi / 8] & (1 << (mbi % 8))) == 0);
                     }
                     else
                     {
-                        // Mirror is in different buffer
+                        // Mirror is in a different buffer; read it temporarily to check
                         struct buf *mbp = bread(dev, mirror_bmap);
-                        int mbi = mirror_logical % BPB;
-                        mbp->data[mbi / 8] |= (1 << (mbi % 8));
-                        bwrite(mbp);
+                        mirror_is_free = ((mbp->data[mbi / 8] & (1 << (mbi % 8))) == 0);
                         brelse(mbp);
                     }
 
-                    blocks[found++] = primary_logical;
+                    // 3. Only proceed if BOTH are free
+                    if (mirror_is_free)
+                    {
+                        // Mark primary
+                        bp->data[bi / 8] |= (1 << (bi % 8));
+
+                        // Mark mirror
+                        if (mirror_bmap == SSBITMAP(primary_logical, sb))
+                        {
+                            bp->data[mbi / 8] |= (1 << (mbi % 8));
+                        }
+                        else
+                        {
+                            struct buf *mbp = bread(dev, mirror_bmap);
+                            mbp->data[mbi / 8] |= (1 << (mbi % 8));
+                            bwrite(mbp);
+                            brelse(mbp);
+                        }
+
+                        blocks[found++] = primary_logical;
+                    }
                 }
             }
             bwrite(bp);
@@ -271,8 +353,10 @@ int sballoc(uint dev, int *blocks)
             uint parity_disk = get_raid5_parity_disk(logical);
             uint offset = stripe; // one block per stripe per disk
 
-            if ((int)parity_disk == failed_disk)
+            if ((int)parity_disk == failed_disk){
+                kfree(old_data);
                 continue; // can't update parity, skip
+            }
 
             // Read old parity
             uint parity_phys = get_physical_block(parity_disk, offset);
@@ -422,21 +506,19 @@ void sread(uint dev, uint logical_block, char *data)
     {
         uint stripe = logical_block / NDISKS;
         int data_disk = logical_block % NDISKS;
-        uint parity_disk = get_raid5_parity_disk(logical_block);
         uint offset = stripe; // one block per stripe per disk
 
         uint phys_block = get_physical_block(data_disk, offset);
 
-        if (failed_disk == -1 || failed_disk == (int)parity_disk)
+        if (failed_disk != data_disk)
         {
-            // No data loss — read directly from data disk
             struct buf *b = bread(dev, phys_block);
             memmove(data, b->data, BSIZE);
             brelse(b);
         }
-        else if (failed_disk == data_disk)
+        else
         {
-            // Data disk failed — reconstruct by XOR-ing all surviving disks in stripe
+            // Target data disk failed — reconstruct by XOR-ing all surviving disks in the stripe
             memset(data, 0, BSIZE);
 
             for (int d = 0; d < NDISKS; d++)
@@ -450,10 +532,6 @@ void sread(uint dev, uint logical_block, char *data)
                     data[j] ^= b->data[j];
                 brelse(b);
             }
-        }
-        else
-        {
-            panic("sread RAID5: two disks failed, unrecoverable");
         }
     }
     else

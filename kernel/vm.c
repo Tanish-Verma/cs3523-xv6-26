@@ -226,6 +226,7 @@ void uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
     if (do_free)
     {
       uint64 pa = PTE2PA(*pte);
+      // printf("uvmunmap: freeing page va=%ld, pa=%p, pid=%d\n", a, (void *)pa, myproc()->pid);
       freeframeTable((void *)pa);
       kfree((void *)pa);
     }

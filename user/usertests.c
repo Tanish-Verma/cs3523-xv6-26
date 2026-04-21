@@ -1013,7 +1013,7 @@ forkforkfork(char *s)
       if(fd >= 0){
         exit(0);
       }
-      printf("fd=%d\n", fd);
+      // printf("fd=%d\n", fd);
       if(fork() < 0){
         close(open("stopforking", O_CREATE|O_RDWR));
       }
@@ -1023,11 +1023,11 @@ forkforkfork(char *s)
   }
 
   pause(20); // two seconds
-  printf("stopping forks\n");
+  // printf("stopping forks\n");
   close(open("stopforking", O_CREATE|O_RDWR));
   wait(0);
   pause(10); // one second
-  printf("done\n");
+  // printf("done\n");
 }
 
 // regression test. does reparent() violate the parent-then-child
@@ -2755,32 +2755,32 @@ struct test {
   void (*f)(char *);
   char *s;
 } quicktests[] = {
-  // {copyin, "copyin"},
-  // {copyout, "copyout"},
-  // {copyinstr1, "copyinstr1"},
-  // {copyinstr2, "copyinstr2"},
-  // {copyinstr3, "copyinstr3"},
-  // {rwsbrk, "rwsbrk" },
-  // {truncate1, "truncate1"},
-  // {truncate2, "truncate2"},
-  // {truncate3, "truncate3"},
-  // {openiputtest, "openiput"},
-  // {exitiputtest, "exitiput"},
-  // {iputtest, "iput"},
-  // {opentest, "opentest"},
-  // {writetest, "writetest"},
-  // {writebig, "writebig"},
-  // {createtest, "createtest"},
-  // {dirtest, "dirtest"},
-  // {exectest, "exectest"},
-  // {pipe1, "pipe1"},
-  // {killstatus, "killstatus"},
-  // {preempt, "preempt"},
-  // {exitwait, "exitwait"},
-  // {reparent, "reparent" },
-  // {twochildren, "twochildren"},
+  {copyin, "copyin"},
+  {copyout, "copyout"},
+  {copyinstr1, "copyinstr1"},
+  {copyinstr2, "copyinstr2"},
+  {copyinstr3, "copyinstr3"},
+  {rwsbrk, "rwsbrk" },
+  {truncate1, "truncate1"},
+  {truncate2, "truncate2"},
+  {truncate3, "truncate3"},
+  {openiputtest, "openiput"},
+  {exitiputtest, "exitiput"},
+  {iputtest, "iput"},
+  {opentest, "opentest"},
+  {writetest, "writetest"},
+  {writebig, "writebig"},
+  {createtest, "createtest"},
+  {dirtest, "dirtest"},
+  {exectest, "exectest"},
+  {pipe1, "pipe1"},
+  {killstatus, "killstatus"},
+  {preempt, "preempt"},
+  {exitwait, "exitwait"},
+  {reparent, "reparent" },
+  {twochildren, "twochildren"},
   {forkfork, "forkfork"},
-  {forkforkfork, "forkforkfork"},
+  // {forkforkfork, "forkforkfork"},
   {reparent2, "reparent2"},
   {mem, "mem"},
   {sharedfd, "sharedfd"},

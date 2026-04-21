@@ -271,9 +271,9 @@ void swap_free(uint64 va, pagetable_t pagetable)
 
 void *evict_page()
 {
+  retry:
   acquire(&frame_lock);
 
-retry:
   int best_victim_index = -1;
   int worst_priority = -1;
   int found = 0;
@@ -365,6 +365,7 @@ retry:
   // flush tlb for this page
   global_tlb_flush(victim_va);
   // release BEFORE swap_out — swap_out does disk I/O which sleeps
+  // printf("h\n");
   release(&frame_lock);
 
   if (swap_out(victim_va, victim_p->pagetable, victim_pa) == -1)
@@ -387,13 +388,17 @@ retry:
       goto retry;
     }
   }
-  memset(victim_pa, 0, PGSIZE);
-
   acquire(&frame_lock);
+  if (frameTable[best_victim_index].pa != victim_pa) {
+    // Page was freed by uvmunmap while we slept — don't touch it
+    release(&frame_lock);
+    goto retry;
+  }
   // mark the victim frame as not in use in the frame table
   frameTable[best_victim_index].va = 0;
   frameTable[best_victim_index].in_use = 0;
   frameTable[best_victim_index].pa = 0;
+  memset(victim_pa, 0, PGSIZE);
   release(&frame_lock);
 
   return victim_pa;
@@ -475,7 +480,7 @@ void freeframeTable(void *pa)
   int found = 0;
   for (int i = 0; i < MAX_NFRAME; i++)
   {
-    if (frameTable[i].pa == pa)
+    if (frameTable[i].pa == pa && frameTable[i].in_use == 1)
     {
       frameTable[i].in_use = 0;
       struct proc *p = frameTable[i].proc;
