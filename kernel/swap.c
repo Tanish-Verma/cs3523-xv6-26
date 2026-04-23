@@ -11,7 +11,7 @@
 #include "buf.h"
 
 extern struct superblock sb;
-uint16 RAID_MODE = RAID5;
+uint16 RAID_MODE = RAID0;
 int failed_disk = -1;
 
 uint get_physical_block(int disk_id, uint block_offset)
@@ -189,6 +189,7 @@ int sballoc(uint dev, int *blocks)
                 {
                     bp->data[bi / 8] |= m;
                     blocks[found] = b + bi;
+                    printf("sballoc: allocated block %d on disk %d\n", b + bi, (b + bi) % NDISKS);
                     found++;
                 }
             }
@@ -459,6 +460,9 @@ void sread(uint dev, uint logical_block, char *data)
     {
         int disk_id = logical_block % NDISKS;
         uint block_offset = logical_block / NDISKS;
+        if (disk_id == failed_disk){
+            printf("sread: reading from a failed disk. Should not happen in real systems, but here who cares ;).\n");
+        }
         uint phys_block = get_physical_block(disk_id, block_offset);
 
         struct buf *b = bread(dev, phys_block);
