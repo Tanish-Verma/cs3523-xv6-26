@@ -2,6 +2,7 @@
 #include "kernel/types.h"
 #include "kernel/stat.h"
 #include "user/user.h"
+#include "kernel/vmstats.h"
 
 int main() {
     struct vmstats st;
@@ -12,7 +13,7 @@ int main() {
     printf("Initial: faults=%d, resident=%d\n", st.page_faults, st.resident_pages);
 
     // 1. Allocate large memory region
-    char *mem = sbrk(50 * pgsz); 
+    char *mem = sbrklazy(50 * pgsz); 
     if(mem == (char*)-1) {
         printf("sbrk failed\n");
         exit(1);

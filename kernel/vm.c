@@ -255,6 +255,7 @@ uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz, int xperm)
       uvmdealloc(pagetable, a, oldsz);
       return 0;
     }
+    // printf("uvmalloc: mapped va=%p to pa=%p (pid: %d)\n", (void *)a, mem, myproc()->pid);
     fillframeTable((void *)mem, myproc(), a);
   }
   return newsz;
@@ -343,6 +344,7 @@ int uvmcopy(pagetable_t old, pagetable_t new, uint64 sz, struct proc *np)
         continue;
       }
     }
+    pte = walk(old, i, 0);
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
     mem = (char *)get_user_frame();
@@ -530,6 +532,7 @@ vmfault(pagetable_t pagetable, uint64 va, int read)
     // printf("vmfault swapin pid=%d va=%ld pa=%p\n", p->pid, va, new_pa);
     acquire(&p->lock);
     p->pages_swapped_in++; // Increment the process's swapped in counter
+    // printf("Page fault handled: PID %d, VA %ld swapped in, total page faults: %d, total pages swapped in: %d\n", p->pid, va, p->page_faults, p->pages_swapped_in);
     release(&p->lock);
     fillframeTable(new_pa, p, va);
     return (uint64)new_pa;

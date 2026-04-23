@@ -300,6 +300,7 @@ int growproc(int n)
     }
     if ((sz = uvmalloc(p->pagetable, sz, sz + n, PTE_W)) == 0)
     {
+      printf("uvmalloc failed\n");
       return -1;
     }
   }

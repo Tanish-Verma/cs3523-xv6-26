@@ -44,8 +44,8 @@
 
 //We can't use end because it's defined in kernel.ld, which is linked after memlayout.h is included. 
 //So we define it here using kernbase.It takes more memory but its fine for our purposes.
-// #define MAX_NFRAME     ((USABLE_PHYSTOP - KERNBASE) / PGSIZE)
-#define MAX_NFRAME     (64)
+#define MAX_NFRAME     ((USABLE_PHYSTOP - KERNBASE) / PGSIZE)
+// #define MAX_NFRAME     (512)
 #define NSWAPFRAMES    (SWAP_SIZE / PGSIZE)
 
 // map the trampoline page to the highest address,

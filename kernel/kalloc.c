@@ -114,7 +114,7 @@ int swap_out(uint64 va, pagetable_t pagetable, void *pa_to_evict)
       swapTable[i].in_use = 1;
       swapTable[i].pagetable = pagetable;
       swapTable[i].va = va;
-
+      // printf("swap_out: evicting va=%ld to swap slot %d (pid: %d)\n", va, i, myproc() ? myproc()->pid : -1);
       // Copy the 4096 bytes from RAM into the reserved swap region
       memmove(swapTable[i].pa, pa_to_evict, PGSIZE);
 
@@ -185,7 +185,7 @@ void fillframeTable(void *pa, struct proc *p, uint64 va)
       frameTable[i].pa = pa;
       //  //debug print
       //  if (p && p->pid > 2) {
-      //    // printf("[FrameTracker] Added: PID %d, VA %ld, PA %p\n", p->pid, va, pa);
+      //    printf("[FrameTracker] Added: PID %d, VA %ld, PA %p\n", p->pid, va, pa);
       //  }
 
       p->resident_pages++;
@@ -208,7 +208,7 @@ void freeframeTable(void *pa)
     {
       frameTable[i].in_use = 0;
       struct proc *p = frameTable[i].proc;
-      // printf("[FrameTracker] Freed PID:  %d\n", p ? p->pid : -1);
+      // printf("[FrameTracker] Freed PID:  %d\n", p  ? p->pid : -1);
       frameTable[i].proc = 0;
       frameTable[i].va = 0;
       frameTable[i].pa = 0;
