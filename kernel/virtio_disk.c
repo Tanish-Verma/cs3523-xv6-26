@@ -494,7 +494,7 @@ void virtio_disk_intr()
     b->disk = 0;   // disk is done with buf
     wakeup(b);
     
-    // CRITICAL: The hardware finished this block, it is now free!
+    // The hardware finished this block, it is now free!
     disk_busy = 0; 
 
     disk.used_idx += 1;

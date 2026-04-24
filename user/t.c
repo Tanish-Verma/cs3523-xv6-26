@@ -18,7 +18,7 @@
 #define RAID5       5
 #define FCFS        0
 #define NCHILDREN   3
-#define SWAP_PAGES  75   // > 64 frames, each child uses this many
+#define SWAP_PAGES  130   // > 64 frames, each child uses this many
 
 typedef struct {
     int pid;

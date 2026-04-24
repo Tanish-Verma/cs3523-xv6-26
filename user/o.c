@@ -19,7 +19,7 @@
 #define SSTF        1
 #define NDISKS      4
 // Must exceed 64 frames
-#define SWAP_PAGES  82
+#define SWAP_PAGES  82 
 
 static char pat(int i) { return (char)((i * 17 + 5) & 0xFF); }
 

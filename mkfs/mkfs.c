@@ -24,7 +24,7 @@
 #define NINODES 200
 
 // Disk layout:
-// [ boot block | sb block | log | inode blocks | free bit map | data blocks ]
+// [ boot block | sb block | log | inode blocks | free bit map | swap bit map | data blocks | swap space ]
 
 int nbitmap = (FSSIZE - SWAPSIZE) / BPB + 1;
 int nswapbitmap = SWAPSIZE / BPB + 1;

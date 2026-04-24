@@ -189,7 +189,7 @@ int sballoc(uint dev, int *blocks)
                 {
                     bp->data[bi / 8] |= m;
                     blocks[found] = b + bi;
-                    printf("sballoc: allocated block %d on disk %d\n", b + bi, (b + bi) % NDISKS);
+                    // printf("sballoc: allocated block %d on disk %d\n", b + bi, (b + bi) % NDISKS);
                     found++;
                 }
             }
@@ -297,46 +297,60 @@ int sballoc(uint dev, int *blocks)
     if (found < 4)
     {
         printf("sballoc: out of swap blocks\n");
-        for (int i = 0; i < found; i++)
-        {
-            bp = bread(dev, SSBITMAP(blocks[i], sb));
-            int bi2 = blocks[i] % BPB;
-            bp->data[bi2 / 8] &= ~(1 << (bi2 % 8));
-            bwrite(bp);
-            brelse(bp);
-
-            if (RAID_MODE == RAID1)
-            {
-                uint mirror_logical = get_raid1_mirror_block(blocks[i]);
-                uint primary_bmap = SSBITMAP(blocks[i], sb);
-                uint mirror_bmap = SSBITMAP(mirror_logical, sb);
-                int mbi2 = mirror_logical % BPB;
-
-                if (primary_bmap == mirror_bmap)
-                {
-                    // Already freed primary above in same block — just clear mirror bit
-                    bp = bread(dev, mirror_bmap);
-                    bp->data[mbi2 / 8] &= ~(1 << (mbi2 % 8));
-                    bwrite(bp);
-                    brelse(bp);
-                }
-                else
-                {
-                    bp = bread(dev, mirror_bmap);
-                    bp->data[mbi2 / 8] &= ~(1 << (mbi2 % 8));
-                    bwrite(bp);
-                    brelse(bp);
-                }
-            }
-        }
+        sbfree(dev, blocks);                  
+        for (int i = 0; i < 4; i++)
+            blocks[i] = -1;                 
         return -1;
     }
 
+    // if (found < 4)
+    // {
+    //     printf("sballoc: out of swap blocks\n");
+    //     for (int i = 0; i < found; i++)
+    //     {
+    //         bp = bread(dev, SSBITMAP(blocks[i], sb));
+    //         int bi2 = blocks[i] % BPB;
+    //         bp->data[bi2 / 8] &= ~(1 << (bi2 % 8));
+    //         bwrite(bp);
+    //         brelse(bp);
+
+    //         if (RAID_MODE == RAID1)
+    //         {
+    //             uint mirror_logical = get_raid1_mirror_block(blocks[i]);
+    //             uint primary_bmap = SSBITMAP(blocks[i], sb);
+    //             uint mirror_bmap = SSBITMAP(mirror_logical, sb);
+    //             int mbi2 = mirror_logical % BPB;
+
+    //             if (primary_bmap == mirror_bmap)
+    //             {
+    //                 // Already freed primary above in same block — just clear mirror bit
+    //                 bp = bread(dev, mirror_bmap);
+    //                 bp->data[mbi2 / 8] &= ~(1 << (mbi2 % 8));
+    //                 bwrite(bp);
+    //                 brelse(bp);
+    //             }
+    //             else
+    //             {
+    //                 bp = bread(dev, mirror_bmap);
+    //                 bp->data[mbi2 / 8] &= ~(1 << (mbi2 % 8));
+    //                 bwrite(bp);
+    //                 brelse(bp);
+    //             }
+    //         }
+    //     }
+    //     return -1;
+    // }
     for (int i = 0; i < found; i++)
     {
-        if (RAID_MODE == RAID0 || RAID_MODE == RAID1)
+        if (RAID_MODE == RAID0)
         {
             sbzero(dev, blocks[i]);
+        }
+        else if (RAID_MODE == RAID1)
+        {
+            uint mirror_logical = get_raid1_mirror_block(blocks[i]);
+            sbzero(dev, blocks[i]);
+            sbzero(dev, mirror_logical);
         }
         else if (RAID_MODE == RAID5)
         {
@@ -561,6 +575,10 @@ void swrite(uint dev, uint logical_block, char *data)
     {
         int primary_disk_id = logical_block % NDISKS;
         uint block_offset = logical_block / NDISKS;
+        if (block_offset >= DISKSIZE)
+        {
+            panic("swrite RAID5: stripe offset exceeds DISKSIZE");
+        }
 
         uint mirror_logical = get_raid1_mirror_block(logical_block);
         int mirror_disk_id = mirror_logical % NDISKS; // FIX: was (primary+2)%NDISKS
@@ -654,22 +672,6 @@ void swrite(uint dev, uint logical_block, char *data)
             struct buf *b = bread(dev, parity_phys);
             memmove(old_parity, b->data, BSIZE);
             brelse(b);
-        }
-        else
-        {
-            // Reconstruct old parity from all surviving data disks
-            memset(old_parity, 0, BSIZE);
-            for (int d = 0; d < NDISKS; d++)
-            {
-                if (d == failed_disk)
-                {
-                    continue;
-                }
-                struct buf *b = bread(dev, get_physical_block(d, offset));
-                for (int j = 0; j < BSIZE; j++)
-                    old_parity[j] ^= b->data[j];
-                brelse(b);
-            }
         }
 
         // Step 3: compute new parity subtractively

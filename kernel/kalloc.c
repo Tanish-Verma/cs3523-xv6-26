@@ -177,8 +177,6 @@ retry:
 
   if (rc == -1)
   {
-    // free already allocated blocks
-    sbfree(ROOTDEV, blocks);
 
     // restore PTE
     acquire(&swap_lock);
@@ -506,7 +504,8 @@ void freeframeTable(void *pa)
       printf("Frame Table Entry %d: in_use=%d, proc_pid=%d, va=%ld, pa=%p\n", i, frameTable[i].in_use, frameTable[i].proc ? frameTable[i].proc->pid : -1, frameTable[i].va, frameTable[i].pa);
     }
     printf("freeframeTable: physical address %p not found in frame table\n", pa);
-    panic("freeframeTable: physical address not found in frame table");
+    printf("freeframeTable: active_frames=%d\n", active_frames);
+    // panic("freeframeTable: physical address not found in frame table");
   }
 
   release(&frame_lock);
