@@ -105,7 +105,6 @@ int swap_in(uint64 va, pagetable_t pagetable, void *new_pa)
   {
     sread(ROOTDEV, blocks[j], (char *)new_pa + j * BSIZE);
   }
-
   sbfree(ROOTDEV, blocks);
 
   acquire(&swap_lock);

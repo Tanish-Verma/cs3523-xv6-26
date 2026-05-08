@@ -11,7 +11,7 @@
 // ============================================================
 
 #define PAGE_SIZE_3    4096
-#define FRAME_LIMIT_3  32
+#define FRAME_LIMIT_3  64
 #define HOT_PAGES    10         // kept active — should not be evicted
 #define COLD_PAGES   15         // never touched again — likely evicted
 #define PRESSURE_PAGES (FRAME_LIMIT_3 * 2)
@@ -170,7 +170,7 @@ test_pa4_4(void)
 // ============================================================
 
 #define PAGE_SIZE_6   4096
-#define FRAME_LIMIT_6 32           // match your kernel's MAX_FRAMES
+#define FRAME_LIMIT_6 64           // match your kernel's MAX_FRAMES
 #define NUM_PAGES_6   (FRAME_LIMIT_6 * 4)
 #define NUM_PASSES_6  3
 

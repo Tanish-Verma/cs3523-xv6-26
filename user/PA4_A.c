@@ -165,7 +165,7 @@ test_pa4_2(void)
 // ============================================================
 
 #define PAGE_SIZE_7   4096
-#define FRAME_LIMIT_7 32      // match kernel MAX_FRAMES
+#define FRAME_LIMIT_7 64      // match kernel MAX_FRAMES
 #define CHILD_PAGES   20
 #define PARENT_PAGES  15
 
